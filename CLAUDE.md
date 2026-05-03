@@ -66,3 +66,8 @@ Three numbered migrations (baseline, claim fields, initiative type). Append-only
 ## Status
 
 Feature-complete. Tight scope. No planned feature additions.
+
+## Tweaks
+
+If tweaks are asked for and work done on the project - offer to update the CHANGELOG.md.  Ask the user first what the new tag will be so you can use it when updating the file.
+
