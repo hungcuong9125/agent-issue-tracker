@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-05-03
+
 ### Changed
 - **Breaking:** mutating commands now return slim output by default, dropping the verbose full-record echo that wasted context in batch operations. Pass `--long` on any of these commands to get the full record back.
   - `create`, `update`, `close` (single), `cancel`, `reopen`, `claim`, `unclaim` now return a slim issue ref (`{id, title, status, type, priority}`) by default. `--long` returns the full `Issue`.
@@ -116,7 +118,8 @@ First stable release. Core feature set:
 - Forward-only schema migration system
 - Custom database path via `--db`
 
-[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.2.2...v1.3.0
