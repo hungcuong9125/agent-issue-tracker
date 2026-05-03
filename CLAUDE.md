@@ -67,6 +67,8 @@ Three numbered migrations (baseline, claim fields, initiative type). Append-only
 
 Feature-complete. Tight scope. No planned feature additions.
 
+Cross-repo orchestration (one feature spanning a frontend and a backend repo, etc.) is handled by the `ait-fleet` Claude skill via the existing `--db` flag and a textual linking convention in notes. Do **not** add cross-DB dependency tracking, fleet manifests, or multi-DB queries to the binary itself — that's deliberately out of scope and the skill exists precisely so the binary can stay tightly scoped.
+
 ## Tweaks
 
 If tweaks are asked for and work done on the project - offer to update the CHANGELOG.md.  Ask the user first what the new tag will be so you can use it when updating the file.

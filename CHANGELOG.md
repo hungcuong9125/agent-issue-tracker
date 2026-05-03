@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-05-03
+
+### Added
+- `ait-fleet` Claude skill — multi-repo orchestration for projects that span more than one git repository (e.g. separate frontend and backend repos). Walks the user through creating a manifest at `~/.config/ait-fleet/<name>.json`, validates each repo path and prefix, and documents the textual linking convention (`Linked epic: <alias>:<id>`, `Blocked by <alias>:<id>`) used to coordinate work across DBs via the existing `--db` flag. No binary changes — cross-DB linking is deliberately kept out of the tool itself and noted as such in `CLAUDE.md`.
+
 ## [1.6.0] - 2026-05-03
 
 ### Changed
