@@ -6,11 +6,15 @@ It is intended to help an agent turn a plan into structured work, track dependen
 
 Repository: `https://github.com/ohnotnow/agent-issue-tracker`
 
+Sibling projects:
+- [web-ait](https://github.com/ohnotnow/web-ait) — web UI for monitoring agent progress
+- [ant](https://github.com/ohnotnow/agent-note-tracker) — agent-first 'why' tracker as opposed to 'what'
+
 ## Status
 
 This project is working - but use at your own risk.  It's been used on real projects, but no guarantees are made about API stability or compatibility.  However, of note - it's effectively feature complete.  The project has a fairly tight scope - and all expected features are implemented.  If you need something 'fancier' - then look for another tool.
 
-Schema changes are now managed through a forward-only migration system, so existing databases are upgraded automatically on startup.
+Schema changes are managed through a forward-only migration system, so existing databases are upgraded automatically on startup.
 
 ## Current Goals
 
