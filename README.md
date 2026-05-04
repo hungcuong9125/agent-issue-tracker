@@ -8,7 +8,8 @@ Repository: `https://github.com/ohnotnow/agent-issue-tracker`
 
 Sibling projects:
 - [web-ait](https://github.com/ohnotnow/web-ait) — web UI for monitoring agent progress
-- [ant](https://github.com/ohnotnow/agent-note-tracker) — agent-first 'why' tracker as opposed to 'what'
+- [ant](https://github.com/ohnotnow/agent-note-tracker) — agent-first note/ADR/"why" tracker to compliment ait's "what"
+
 
 ## Status
 
