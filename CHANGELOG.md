@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-05-04
+
+### Added
+- `self-update` command — download, verify, and atomically swap the running binary against the latest GitHub release. Mirrors the surface of the sibling `ant` tool so the two stay muscle-memory compatible.
+  - `ait self-update` — interactive flow showing release notes and a y/N prompt.
+  - `ait self-update --yes` (or `-y`) — skip the prompt.
+  - `ait self-update --check` — report only; exits 0 if up to date, 1 if a newer release is available, 2 if the lookup failed (mirrors `composer outdated`).
+  - Verifies the downloaded binary against a published `SHA256SUMS` before swapping. Refuses to run on dev builds, redirects Homebrew and `go install` users to the right tool, warns (but proceeds) for `/usr/bin` and `/usr/local/bin` on Linux, and bails out before any download if the install directory is unwriteable.
+- Release workflow now publishes a `SHA256SUMS` asset alongside the platform binaries so users can verify downloads independently of self-update.
+
+### Changed
+- `version` upgrade hint now mentions `ait self-update` alongside the releases page link.
+- Internal: error plumbing gained an `ExitWithCode` / `SilentExit` pair so commands can return a specific shell exit code (with or without the JSON error envelope). `WriteError` was split out of `ExitWithError` to support the new path.
+
 ## [1.7.0] - 2026-05-03
 
 ### Added
@@ -123,7 +137,9 @@ First stable release. Core feature set:
 - Forward-only schema migration system
 - Custom database path via `--db`
 
-[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.3.0...v1.4.0
