@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -31,20 +32,39 @@ func main() {
 	cmd, ok := ait.LookupCommand(args[0])
 	if ok && !cmd.NeedsDB {
 		if err := cmd.Run(nil, ctx, args[1:]); err != nil {
-			ait.ExitWithError(ait.NormalizeError(err))
+			handleExit(err)
 		}
 		return
 	}
 
 	app, err := ait.Open(ctx, dbPath)
 	if err != nil {
-		ait.ExitWithError(ait.NormalizeError(err))
+		handleExit(err)
 	}
 	defer app.Close()
 
 	if err := app.Run(ctx, args); err != nil {
-		ait.ExitWithError(ait.NormalizeError(err))
+		handleExit(err)
 	}
+}
+
+// handleExit translates a command error into stderr output (when there is
+// real failure detail) and a shell exit code. Errors carrying a specific
+// exit code via ait.ExitWithCode skip the JSON envelope when the wrapped
+// cause is nil — used by `self-update --check` to signal "newer version
+// available" with exit 1 but no error payload.
+func handleExit(err error) {
+	if code, ok := ait.ExitCode(err); ok {
+		if !ait.SilentExit(err) {
+			cause := errors.Unwrap(err)
+			if cause == nil {
+				cause = err
+			}
+			ait.WriteError(ait.NormalizeError(cause))
+		}
+		os.Exit(code)
+	}
+	ait.ExitWithError(ait.NormalizeError(err))
 }
 
 func extractDBFlag(args []string) (string, []string, error) {

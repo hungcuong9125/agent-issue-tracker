@@ -271,13 +271,20 @@ func NormalizeError(err error) *CLIError {
 	}
 }
 
-func ExitWithError(err *CLIError) {
+// WriteError emits the JSON {"error": {...}} envelope without exiting. Used
+// by main when an error already carries a specific exit code (via
+// ExitWithCode) but still has a real cause worth surfacing to the caller.
+func WriteError(err *CLIError) {
 	_ = PrintJSON(map[string]any{
 		"error": map[string]any{
 			"code":    err.Code,
 			"message": err.Message,
 		},
 	})
+}
+
+func ExitWithError(err *CLIError) {
+	WriteError(err)
 	os.Exit(err.ExitCode)
 }
 

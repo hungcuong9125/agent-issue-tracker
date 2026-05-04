@@ -89,7 +89,7 @@ func generateHelpText() string {
 		if len(cmd.Aliases) > 0 {
 			summary += " (alias: " + strings.Join(cmd.Aliases, ", ") + ")"
 		}
-		fmt.Fprintf(&b, "  %-10s %-35s %s\n", cmd.Name, usage, summary)
+		fmt.Fprintf(&b, "  %-11s %-35s %s\n", cmd.Name, usage, summary)
 	}
 
 	b.WriteString(`

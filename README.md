@@ -80,6 +80,7 @@ It's not designed to handle cross-team shared issues, work, projects.  The inter
 - `note add`
 - `note list`
 - `version`
+- `self-update` (`--check`, `--yes`)
 - `export` (`--output`)
 - `completion` (`bash`, `zsh`)
 
@@ -360,6 +361,25 @@ You might also want to allow the agent to run `ait` and use the `ait` skill with
   }
 }
 ```
+
+## Self-update
+
+Released binaries can update themselves in place:
+
+```bash
+ait self-update          # interactive: shows release notes, prompts y/N
+ait self-update --yes    # skip the prompt
+ait self-update --check  # report whether an update is available; exit only
+```
+
+Exit codes for `--check` mirror the `composer outdated` style — `0` if you are
+already on the latest, `1` if a newer release is available, `2` if the lookup
+failed (e.g. offline). The command verifies the downloaded binary against the
+release's `SHA256SUMS` before swapping it into place atomically.
+
+If `ait` was installed via Homebrew or `go install`, self-update declines and
+points you at the right tool. Dev builds (`Version == "dev"`) are also a no-op
+— rebuild from source instead.
 
 ## Development
 

@@ -554,6 +554,34 @@ Examples:
 			},
 		},
 		{
+			Name:    "self-update",
+			Summary: "Download and install the latest release",
+			Help: `Usage: ait self-update [--check] [--yes]
+
+Download the latest release binary for this platform, verify it against
+the published SHA256SUMS, and atomically replace the running executable.
+
+Exit codes for --check:
+  0   Already on the latest release
+  1   Newer release available
+  2   Couldn't look it up (network etc.)
+
+Flags:
+  --check        Report whether an update is available; do not download
+  --yes, -y      Skip the confirmation prompt
+
+Examples:
+  ait self-update
+  ait self-update --yes
+  ait self-update --check
+`,
+			Flags:   []string{"--check", "--yes"},
+			NeedsDB: false,
+			Run: func(_ *App, _ context.Context, args []string) error {
+				return RunSelfUpdate(args)
+			},
+		},
+		{
 			Name:    "help",
 			Summary: "Show this help",
 			NeedsDB: false,
