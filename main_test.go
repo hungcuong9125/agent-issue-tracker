@@ -346,6 +346,24 @@ func TestCompletionScripts(t *testing.T) {
 	}
 }
 
+// withFakeEditor installs a shell script as $EDITOR for the duration of the
+// test. The script copies the seeded contents of the file argument into
+// seedPath (for inspection) and then replaces the file with replacement.
+func withFakeEditor(t *testing.T, seedPath, replacement string) {
+	t.Helper()
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "editor.sh")
+	replPath := filepath.Join(dir, "replacement.txt")
+	if err := os.WriteFile(replPath, []byte(replacement), 0o644); err != nil {
+		t.Fatalf("write replacement: %v", err)
+	}
+	script := "#!/bin/sh\ncp \"$1\" " + seedPath + "\ncp " + replPath + " \"$1\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	t.Setenv("EDITOR", scriptPath)
+}
+
 func testApp(t *testing.T, fn func(ctx context.Context, a *ait.App)) {
 	t.Helper()
 
@@ -2351,6 +2369,79 @@ func TestUpdateDescription(t *testing.T) {
 		}
 		if updated.Title != "Test issue" {
 			t.Fatalf("title should be unchanged, got %q", updated.Title)
+		}
+	})
+}
+
+func TestUpdateHumanEditsTitleAndDescription(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		runJSONCommand[map[string]any](t, a, []string{"init", "--prefix", "human"}, nil)
+
+		var created ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Original title", "--description", "Original body"}, &created)
+
+		seedDir := t.TempDir()
+		seedPath := filepath.Join(seedDir, "seed.txt")
+		withFakeEditor(t, seedPath, "Edited title\n\nEdited body\n")
+
+		var updated ait.Issue
+		runJSONCommand(t, a, []string{"update", created.ID, "--human", "--long"}, &updated)
+
+		if updated.Title != "Edited title" {
+			t.Fatalf("expected title %q, got %q", "Edited title", updated.Title)
+		}
+		if updated.Description != "Edited body" {
+			t.Fatalf("expected description %q, got %q", "Edited body", updated.Description)
+		}
+
+		seed, err := os.ReadFile(seedPath)
+		if err != nil {
+			t.Fatalf("read seed file: %v", err)
+		}
+		if !strings.Contains(string(seed), "Original title") {
+			t.Fatalf("expected editor to be seeded with current title, got:\n%s", seed)
+		}
+		if !strings.Contains(string(seed), "Original body") {
+			t.Fatalf("expected editor to be seeded with current description, got:\n%s", seed)
+		}
+	})
+}
+
+func TestUpdateHumanRejectsCombinationWithTitleFlag(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		runJSONCommand[map[string]any](t, a, []string{"init", "--prefix", "human"}, nil)
+		var created ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Original"}, &created)
+
+		err := runExpectError(t, a, []string{"update", created.ID, "--human", "--title", "Nope"})
+		if err == nil {
+			t.Fatal("expected error combining --human and --title")
+		}
+	})
+}
+
+func TestUpdateHumanLeavesUnchangedFieldsAlone(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		runJSONCommand[map[string]any](t, a, []string{"init", "--prefix", "human"}, nil)
+
+		var created ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Keep title", "--description", "Old body"}, &created)
+
+		seedDir := t.TempDir()
+		seedPath := filepath.Join(seedDir, "seed.txt")
+		withFakeEditor(t, seedPath, "Keep title\n\nNew body\n")
+
+		var updated ait.Issue
+		runJSONCommand(t, a, []string{"update", created.ID, "--human", "--priority", "P0", "--long"}, &updated)
+
+		if updated.Title != "Keep title" {
+			t.Fatalf("title should be unchanged, got %q", updated.Title)
+		}
+		if updated.Description != "New body" {
+			t.Fatalf("expected new body, got %q", updated.Description)
+		}
+		if updated.Priority != "P0" {
+			t.Fatalf("expected priority P0, got %q", updated.Priority)
 		}
 	})
 }

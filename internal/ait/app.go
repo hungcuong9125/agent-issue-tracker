@@ -103,7 +103,7 @@ func (a *App) runCreate(ctx context.Context, args []string) error {
 	}
 
 	if *human {
-		edTitle, edDesc, err := EditIssueMessage()
+		edTitle, edDesc, err := EditIssueMessage("", "")
 		if err != nil {
 			return err
 		}
@@ -515,11 +515,16 @@ func (a *App) runUpdate(ctx context.Context, args []string) error {
 	status := fs.String("status", "", "")
 	parentID := fs.String("parent", "", "")
 	priority := fs.String("priority", "", "")
+	human := fs.Bool("human", false, "")
 	long := fs.Bool("long", false, "")
 	fs.SetOutput(io.Discard)
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return &CLIError{Code: "usage", Message: err.Error(), ExitCode: 64}
+	}
+
+	if *human && (*title != "" || *description != "") {
+		return &CLIError{Code: "usage", Message: "--human cannot be combined with --title or --description", ExitCode: 64}
 	}
 
 	if *description != "" {
@@ -533,6 +538,19 @@ func (a *App) runUpdate(ctx context.Context, args []string) error {
 	current, err := a.fetchIssueByInternalID(ctx, internalID)
 	if err != nil {
 		return err
+	}
+
+	if *human {
+		edTitle, edDesc, err := EditIssueMessage(current.Title, current.Description)
+		if err != nil {
+			return err
+		}
+		if edTitle != strings.TrimSpace(current.Title) {
+			*title = edTitle
+		}
+		if edDesc != strings.TrimSpace(current.Description) {
+			*description = edDesc
+		}
 	}
 	if *status != "" {
 		if err := ValidateStatus(*status); err != nil {

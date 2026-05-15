@@ -262,6 +262,7 @@ Examples:
 			Summary: "Update an issue",
 			Args:    "<id>",
 			Help: `Usage: ait update <id> [flags]
+       ait update <id> --human [flags]
 
 Update fields on an existing issue.
 
@@ -272,13 +273,17 @@ Flags:
   --description <text>   New description (use @file to read from a file)
   --status <status>      New status (open, in_progress, closed, cancelled)
   --priority <P0-P4>     New priority
+  --human                Open $EDITOR pre-filled with the current title and
+                         description (mutually exclusive with --title/--description)
   --long                 Return the full Issue record instead of a slim ref
 
 Examples:
   ait update PROJ-1 --title "Renamed issue"
   ait update PROJ-1 --status in_progress --priority P0
+  ait update PROJ-1 --human
+  ait edit PROJ-1 --human --priority P1
 `,
-			Flags:   []string{"--title", "--description", "--status", "--priority", "--parent", "--long"},
+			Flags:   []string{"--title", "--description", "--status", "--priority", "--parent", "--human", "--long"},
 			NeedsDB: true,
 			Run: func(a *App, ctx context.Context, args []string) error {
 				return a.runUpdate(ctx, args)

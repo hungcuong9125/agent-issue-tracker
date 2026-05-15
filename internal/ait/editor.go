@@ -6,28 +6,49 @@ import (
 	"strings"
 )
 
-const editorTemplate = `
-# Enter issue details. First line is the title, everything after
+const editorCreateHelp = `# Enter issue details. First line is the title, everything after
 # a blank line is the description. Lines starting with # are ignored.
 # Save and close the editor to create the issue; leave it empty to abort.
 `
 
+const editorUpdateHelp = `# Edit issue details. First line is the title, everything after
+# a blank line is the description. Lines starting with # are ignored.
+# Save and close the editor to apply the changes; leave it empty to abort.
+`
+
 // EditIssueMessage opens $EDITOR (falling back to vi) with a template and
 // parses the result into a title and description, similar to git commit.
-func EditIssueMessage() (title, description string, err error) {
+// If initialTitle/initialDescription are non-empty they are pre-populated for
+// the user to edit.
+func EditIssueMessage(initialTitle, initialDescription string) (title, description string, err error) {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
 	}
 
-	tmp, err := os.CreateTemp("", "ait-create-*.md")
+	tmp, err := os.CreateTemp("", "ait-edit-*.md")
 	if err != nil {
 		return "", "", &CLIError{Code: "io", Message: "cannot create temp file: " + err.Error(), ExitCode: 73}
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 
-	if _, err := tmp.WriteString(editorTemplate); err != nil {
+	var body strings.Builder
+	if initialTitle == "" && initialDescription == "" {
+		body.WriteString("\n")
+		body.WriteString(editorCreateHelp)
+	} else {
+		body.WriteString(initialTitle)
+		body.WriteString("\n\n")
+		body.WriteString(initialDescription)
+		if initialDescription != "" {
+			body.WriteString("\n")
+		}
+		body.WriteString("\n")
+		body.WriteString(editorUpdateHelp)
+	}
+
+	if _, err := tmp.WriteString(body.String()); err != nil {
 		tmp.Close()
 		return "", "", &CLIError{Code: "io", Message: "cannot write temp file: " + err.Error(), ExitCode: 73}
 	}

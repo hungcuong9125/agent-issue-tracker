@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-05-15
+
+### Added
+- `update --human` (also `edit --human`) — mirrors `create --human` for editing. Opens `$EDITOR` pre-filled with the issue's current title and description so you can fix a typo (or rewrite the lot) without retyping it on the command line.
+  - Only fields you actually change in the editor are written, so saving with no edits surfaces the existing "no fields were provided to update" error rather than silently no-op'ing.
+  - Composes with other flags, e.g. `ait update PROJ-1 --human --priority P0`.
+  - `--human` is mutually exclusive with `--title` / `--description` — the editor is the source of truth when it's open.
+
 ## [1.8.2] - 2026-05-04
 
 ### Added
