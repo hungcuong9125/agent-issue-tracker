@@ -76,7 +76,7 @@ func generateBashCompletion() string {
 
     # Value completions for flags that take specific values.
     case "${cmd}" in
-        list|create|update|edit|ready)
+        list|create|add|update|edit|ready)
             case "${prev}" in
                 --status)   COMPREPLY=($(compgen -W "${statuses}" -- "${cur}")); return ;;
                 --type)     COMPREPLY=($(compgen -W "${types}" -- "${cur}")); return ;;
@@ -217,7 +217,7 @@ _ait() {
                 '--priority[Filter by priority]:priority:(${priorities})' \
                 '--parent[Filter by parent]:id:_ait_issue_ids'
             ;;
-        create)
+        create|add)
             _arguments \
                 '--title[Issue title]:title:' \
                 '--description[Issue description]:description:' \

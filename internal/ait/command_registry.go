@@ -120,6 +120,7 @@ Show the current project configuration (prefix, schema version).
 		},
 		{
 			Name:    "create",
+			Aliases: []string{"add"},
 			Summary: "Create a new issue",
 			Help: `Usage: ait create --title <t> [flags]
        ait create --human [flags]

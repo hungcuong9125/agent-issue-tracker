@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-05-20
+
+### Added
+- `add` as an alias for `create`. Coding agents (this one included) regularly try `ait add ...` on muscle memory, hit an error, read help, then retry with `create`. The alias removes that round-trip — both spellings now do the same thing, and shell completion treats them identically.
+
 ## [1.9.0] - 2026-05-15
 
 ### Added

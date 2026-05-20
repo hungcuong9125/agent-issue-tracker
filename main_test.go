@@ -553,6 +553,19 @@ func TestCreateReturnsIssueRefByDefault(t *testing.T) {
 	})
 }
 
+func TestAddIsAliasForCreate(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var ref ait.IssueRef
+		runJSONCommand(t, a, []string{"add", "--title", "Via alias"}, &ref)
+		if ref.ID == "" {
+			t.Fatal("expected add alias to create an issue with an id")
+		}
+		if ref.Title != "Via alias" {
+			t.Fatalf("expected title %q, got %q", "Via alias", ref.Title)
+		}
+	})
+}
+
 func TestCreateLongReturnsFullIssue(t *testing.T) {
 	testApp(t, func(ctx context.Context, a *ait.App) {
 		var created ait.Issue
