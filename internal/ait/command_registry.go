@@ -274,6 +274,8 @@ Flags:
   --description <text>   New description (use @file to read from a file)
   --status <status>      New status (open, in_progress, closed, cancelled)
   --priority <P0-P4>     New priority
+  --claim <agent-name>   Claim the issue for an agent as part of the update
+                         (fails if already claimed, like the claim command)
   --human                Open $EDITOR pre-filled with the current title and
                          description (mutually exclusive with --title/--description)
   --long                 Return the full Issue record instead of a slim ref
@@ -281,10 +283,11 @@ Flags:
 Examples:
   ait update PROJ-1 --title "Renamed issue"
   ait update PROJ-1 --status in_progress --priority P0
+  ait update PROJ-1 --status in_progress --claim builder-agent
   ait update PROJ-1 --human
   ait edit PROJ-1 --human --priority P1
 `,
-			Flags:   []string{"--title", "--description", "--status", "--priority", "--parent", "--human", "--long"},
+			Flags:   []string{"--title", "--description", "--status", "--priority", "--claim", "--parent", "--human", "--long"},
 			NeedsDB: true,
 			Run: func(a *App, ctx context.Context, args []string) error {
 				return a.runUpdate(ctx, args)
@@ -345,22 +348,25 @@ Examples:
 			Name:    "cancel",
 			Summary: "Cancel an issue",
 			Args:    "<id>",
-			Help: `Usage: ait cancel <id> [--long]
+			Help: `Usage: ait cancel <id> [--note <text>] [--long]
 
-Cancel an issue.
+Cancel an issue. With --note, a note is added before cancelling.
 
 By default, returns a slim ref. Use --long for the full Issue record.
 
 Flags:
-  --long   Return the full Issue record instead of a slim ref
+  --note <text>   Add a note before cancelling the issue
+  --reason <text> Alias for --note
+  --long          Return the full Issue record instead of a slim ref
 
 Examples:
   ait cancel PROJ-1
+  ait cancel PROJ-1 --note "Superseded by new approach"
 `,
-			Flags:   []string{"--long"},
+			Flags:   []string{"--note", "--reason", "--long"},
 			NeedsDB: true,
 			Run: func(a *App, ctx context.Context, args []string) error {
-				return a.runStatusChange(ctx, args, StatusCancelled)
+				return a.runCancel(ctx, args)
 			},
 		},
 		{

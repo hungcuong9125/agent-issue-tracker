@@ -1969,6 +1969,76 @@ func TestClaimVisibleInShow(t *testing.T) {
 	})
 }
 
+func TestUpdateWithClaimFoldsClaimIntoUpdate(t *testing.T) {
+	// update --claim lets an agent claim and update an issue in one step,
+	// rather than the two-step claim-then-update dance.
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var created ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Claim and start"}, &created)
+
+		var updated ait.Issue
+		runJSONCommand(t, a, []string{"update", created.ID, "--status", ait.StatusInProgress, "--claim", "agent-x", "--long"}, &updated)
+
+		if updated.Status != ait.StatusInProgress {
+			t.Fatalf("expected status=in_progress, got %s", updated.Status)
+		}
+		if updated.ClaimedBy == nil || *updated.ClaimedBy != "agent-x" {
+			t.Fatalf("expected claimed_by=agent-x, got %v", updated.ClaimedBy)
+		}
+		if updated.ClaimedAt == nil {
+			t.Fatalf("expected claimed_at to be set")
+		}
+	})
+}
+
+func TestUpdateClaimAloneIsAValidUpdate(t *testing.T) {
+	// --claim on its own should satisfy the "something changed" requirement,
+	// so `update <id> --claim <name>` need not be paired with another field.
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var created ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Just claim me"}, &created)
+
+		var updated ait.Issue
+		runJSONCommand(t, a, []string{"update", created.ID, "--claim", "agent-y", "--long"}, &updated)
+
+		if updated.ClaimedBy == nil || *updated.ClaimedBy != "agent-y" {
+			t.Fatalf("expected claimed_by=agent-y, got %v", updated.ClaimedBy)
+		}
+	})
+}
+
+func TestUpdateClaimAlreadyClaimedReturnsConflict(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var created ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Contested via update"}, &created)
+
+		runJSONCommand[ait.Issue](t, a, []string{"claim", created.ID, "agent-1"}, nil)
+
+		err := runExpectError(t, a, []string{"update", created.ID, "--claim", "agent-2"})
+		if err == nil {
+			t.Fatal("expected conflict error")
+		}
+		if !strings.Contains(err.Error(), "already claimed") {
+			t.Fatalf("expected 'already claimed' message, got: %s", err.Error())
+		}
+	})
+}
+
+func TestUpdateClaimRequiresAgentName(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var created ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Empty claim"}, &created)
+
+		err := runExpectError(t, a, []string{"update", created.ID, "--claim", ""})
+		if err == nil {
+			t.Fatal("expected validation error for empty agent name")
+		}
+		if !strings.Contains(err.Error(), "agent name is required") {
+			t.Fatalf("expected 'agent name is required' message, got: %s", err.Error())
+		}
+	})
+}
+
 func TestMigrationsAreIdempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "idempotent.db")
@@ -2631,7 +2701,15 @@ func TestCloseWithNoteFlag(t *testing.T) {
 	testApp(t, func(ctx context.Context, a *ait.App) {
 		var task ait.Issue
 		runJSONCommand(t, a, []string{"create", "--title", "Migration bug"}, &task)
-		runJSONCommand[ait.Issue](t, a, []string{"close", task.ID, "--note", "Fixed ordering"}, nil)
+
+		// Decoding into a single ref also guards against close --note emitting a
+		// second JSON document (the note ack) — json.Unmarshal rejects trailing
+		// objects.
+		var closed ait.IssueRef
+		runJSONCommand(t, a, []string{"close", task.ID, "--note", "Fixed ordering"}, &closed)
+		if closed.Status != ait.StatusClosed {
+			t.Fatalf("expected status=closed, got %s", closed.Status)
+		}
 
 		runJSONCommand[ait.FlushResult](t, a, []string{"flush"}, nil)
 
@@ -2643,6 +2721,52 @@ func TestCloseWithNoteFlag(t *testing.T) {
 		}
 		if entries[0].Items[0].CloseReason != "Fixed ordering" {
 			t.Fatalf("expected close reason %q, got %q", "Fixed ordering", entries[0].Items[0].CloseReason)
+		}
+	})
+}
+
+func TestCancelWithNoteFlag(t *testing.T) {
+	// cancel --note mirrors close --note: a note is attached before the
+	// status change. --reason remains as an alias for parity with close.
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var task ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Going nowhere"}, &task)
+
+		// Decoding into a single ref also guards against cancel --note emitting a
+		// second JSON document (the note ack).
+		var cancelled ait.IssueRef
+		runJSONCommand(t, a, []string{"cancel", task.ID, "--note", "Superseded by new approach"}, &cancelled)
+		if cancelled.Status != ait.StatusCancelled {
+			t.Fatalf("expected status=cancelled, got %s", cancelled.Status)
+		}
+
+		var shown ait.ShowResponse
+		runJSONCommand(t, a, []string{"show", task.ID}, &shown)
+
+		if shown.Issue.Status != ait.StatusCancelled {
+			t.Fatalf("expected status=cancelled, got %s", shown.Issue.Status)
+		}
+		if len(shown.Notes) != 1 {
+			t.Fatalf("expected 1 note, got %d", len(shown.Notes))
+		}
+		if shown.Notes[0].Body != "Cancelled: Superseded by new approach" {
+			t.Fatalf("unexpected note body: %q", shown.Notes[0].Body)
+		}
+	})
+}
+
+func TestCancelWithReasonAlias(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var task ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Dupe"}, &task)
+		var cancelled ait.IssueRef
+		runJSONCommand(t, a, []string{"cancel", task.ID, "--reason", "duplicate"}, &cancelled)
+
+		var shown ait.ShowResponse
+		runJSONCommand(t, a, []string{"show", task.ID}, &shown)
+
+		if len(shown.Notes) != 1 || shown.Notes[0].Body != "Cancelled: duplicate" {
+			t.Fatalf("expected 'Cancelled: duplicate' note, got %v", shown.Notes)
 		}
 	})
 }

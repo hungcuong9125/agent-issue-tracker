@@ -515,6 +515,7 @@ func (a *App) runUpdate(ctx context.Context, args []string) error {
 	status := fs.String("status", "", "")
 	parentID := fs.String("parent", "", "")
 	priority := fs.String("priority", "", "")
+	claimAgent := fs.String("claim", "", "")
 	human := fs.Bool("human", false, "")
 	long := fs.Bool("long", false, "")
 	fs.SetOutput(io.Discard)
@@ -522,6 +523,16 @@ func (a *App) runUpdate(ctx context.Context, args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return &CLIError{Code: "usage", Message: err.Error(), ExitCode: 64}
 	}
+
+	// Detect whether --claim was passed at all, so that --claim with an empty
+	// value can be rejected (matching the `claim` command) rather than silently
+	// ignored.
+	claimRequested := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "claim" {
+			claimRequested = true
+		}
+	})
 
 	if *human && (*title != "" || *description != "") {
 		return &CLIError{Code: "usage", Message: "--human cannot be combined with --title or --description", ExitCode: 64}
@@ -596,6 +607,21 @@ func (a *App) runUpdate(ctx context.Context, args []string) error {
 	if *priority != "" {
 		sets = append(sets, "priority = ?")
 		params = append(params, *priority)
+	}
+	if claimRequested {
+		agentName := strings.TrimSpace(*claimAgent)
+		if agentName == "" {
+			return &CLIError{Code: "validation", Message: "agent name is required", ExitCode: 65}
+		}
+		if current.ClaimedBy != nil {
+			return &CLIError{
+				Code:     "conflict",
+				Message:  fmt.Sprintf("issue %s is already claimed by %s", current.ID, *current.ClaimedBy),
+				ExitCode: 65,
+			}
+		}
+		sets = append(sets, "claimed_by = ?", "claimed_at = ?")
+		params = append(params, agentName, NowUTC())
 	}
 	if len(sets) == 0 {
 		return &CLIError{Code: "validation", Message: "no fields were provided to update", ExitCode: 65}
@@ -806,9 +832,15 @@ func (a *App) runClose(ctx context.Context, args []string) error {
 		return &CLIError{Code: "usage", Message: "usage: ait close <id> [--cascade] [--note <text>] [--long]", ExitCode: 64}
 	}
 
-	// If --note (or the --reason alias) was given, add a note before closing.
+	// If --note (or the --reason alias) was given, attach a closing note before
+	// closing. addNote (rather than runNoteAdd) is used so the command emits a
+	// single JSON document — the issue ref — rather than the note ack as well.
 	if strings.TrimSpace(note) != "" {
-		if err := a.runNoteAdd(ctx, []string{filtered[0], "Closed: " + note}); err != nil {
+		internalID, err := a.resolveIssueID(ctx, filtered[0])
+		if err != nil {
+			return err
+		}
+		if _, _, err := a.addNote(ctx, internalID, "Closed: "+note); err != nil {
 			return err
 		}
 	}
@@ -890,6 +922,58 @@ func (a *App) runCascadeClose(ctx context.Context, key string, long bool) error 
 		return PrintJSON(map[string]any{"closed": closedFull})
 	}
 	return PrintJSON(map[string]any{"closed": closedRefs})
+}
+
+func (a *App) runCancel(ctx context.Context, args []string) error {
+	// Extract --note, --reason and --long from anywhere in the args since
+	// flag.Parse stops at the first non-flag argument and the ID is positional.
+	// This mirrors the surface of `close`: --reason is kept as an alias for
+	// --note.
+	long := false
+	var note string
+	var filtered []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--help" || arg == "-h" {
+			PrintCommandHelp("cancel")
+			return nil
+		}
+		if arg == "--long" {
+			long = true
+		} else if (arg == "--note" || arg == "--reason") && i+1 < len(args) {
+			note = args[i+1]
+			i++
+		} else if strings.HasPrefix(arg, "--note=") {
+			note = strings.TrimPrefix(arg, "--note=")
+		} else if strings.HasPrefix(arg, "--reason=") {
+			note = strings.TrimPrefix(arg, "--reason=")
+		} else {
+			filtered = append(filtered, arg)
+		}
+	}
+
+	if len(filtered) != 1 {
+		return &CLIError{Code: "usage", Message: "usage: ait cancel <id> [--note <text>] [--long]", ExitCode: 64}
+	}
+
+	// If --note (or the --reason alias) was given, attach a note before
+	// cancelling. addNote (rather than runNoteAdd) is used so the command emits
+	// a single JSON document — the issue ref — rather than the note ack as well.
+	if strings.TrimSpace(note) != "" {
+		internalID, err := a.resolveIssueID(ctx, filtered[0])
+		if err != nil {
+			return err
+		}
+		if _, _, err := a.addNote(ctx, internalID, "Cancelled: "+note); err != nil {
+			return err
+		}
+	}
+
+	statusArgs := filtered
+	if long {
+		statusArgs = append(statusArgs, "--long")
+	}
+	return a.runStatusChange(ctx, statusArgs, StatusCancelled)
 }
 
 func (a *App) runReopen(ctx context.Context, args []string) error {
@@ -1180,29 +1264,8 @@ func (a *App) runNoteAdd(ctx context.Context, args []string) error {
 		return err
 	}
 	body := strings.TrimSpace(args[1])
-	if body == "" {
-		return &CLIError{Code: "validation", Message: "note body is required", ExitCode: 65}
-	}
 
-	noteID, err := NewID()
-	if err != nil {
-		return err
-	}
-	createdAt := NowUTC()
-
-	_, err = a.db.ExecContext(
-		ctx,
-		`INSERT INTO issue_notes (id, issue_id, body, created_at) VALUES (?, ?, ?, ?)`,
-		noteID,
-		internalID,
-		body,
-		createdAt,
-	)
-	if err != nil {
-		return err
-	}
-
-	_, err = a.db.ExecContext(ctx, `UPDATE issues SET updated_at = ? WHERE id = ?`, NowUTC(), internalID)
+	noteID, createdAt, err := a.addNote(ctx, internalID, body)
 	if err != nil {
 		return err
 	}
@@ -1220,6 +1283,41 @@ func (a *App) runNoteAdd(ctx context.Context, args []string) error {
 		"issue_id": issue.ID,
 		"note_id":  noteID,
 	})
+}
+
+// addNote inserts a note for the given issue and bumps the issue's updated_at,
+// returning the new note's ID and creation timestamp. It does not print
+// anything — that is the caller's job. Shared by `note add` and the --note
+// paths of close/cancel, which attach a note without emitting a separate JSON
+// document of their own.
+func (a *App) addNote(ctx context.Context, internalID int64, body string) (string, string, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "", "", &CLIError{Code: "validation", Message: "note body is required", ExitCode: 65}
+	}
+
+	noteID, err := NewID()
+	if err != nil {
+		return "", "", err
+	}
+	createdAt := NowUTC()
+
+	if _, err := a.db.ExecContext(
+		ctx,
+		`INSERT INTO issue_notes (id, issue_id, body, created_at) VALUES (?, ?, ?, ?)`,
+		noteID,
+		internalID,
+		body,
+		createdAt,
+	); err != nil {
+		return "", "", err
+	}
+
+	if _, err := a.db.ExecContext(ctx, `UPDATE issues SET updated_at = ? WHERE id = ?`, NowUTC(), internalID); err != nil {
+		return "", "", err
+	}
+
+	return noteID, createdAt, nil
 }
 
 func (a *App) runNoteList(ctx context.Context, args []string) error {

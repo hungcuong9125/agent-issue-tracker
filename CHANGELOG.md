@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-05-28
+
+### Added
+- `update --claim <agent-name>` (also `edit --claim`) — fold a claim into an update so you can claim an issue and mark it `in_progress` in a single call, instead of running `claim` then `update`. Agents (this one included) regularly assume `update` can claim, or trip over the two-step dance; this removes the round-trip. Uses the same rules as the `claim` command — it fails with a conflict if the issue is already held — and `--claim` on its own counts as a valid update.
+- `cancel --note "<text>"` (with `--reason` as an alias) — attach a note while cancelling, matching the surface `close` already had. Stored as a `Cancelled: <text>` note. A small paper-cut for agents that learned `close --note` and reached for the same on `cancel`.
+
+### Fixed
+- `close --note` and `cancel --note` no longer emit two JSON documents (the note acknowledgement followed by the issue ref). They now return a single issue ref, so a caller parsing stdout gets one object rather than tripping over trailing JSON. Plain `note add` still prints its acknowledgement as before.
+
 ## [1.10.0] - 2026-05-20
 
 ### Added
@@ -159,7 +168,10 @@ First stable release. Core feature set:
 - Forward-only schema migration system
 - Custom database path via `--db`
 
-[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.8.2...HEAD
+[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.9.0...v1.10.0
+[1.9.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.8.2...v1.9.0
 [1.8.2]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.7.0...v1.8.0
