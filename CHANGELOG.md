@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-05-30
+
+### Added
+- `ait` now adds `.ait/` to your project's `.gitignore` the first time it creates its data directory inside a git repository, so the local issue database isn't committed. It only does this for the default `.ait/ait.db` location, leaves custom `--db` paths and non-git directories alone, and never overwrites a `.ait/` entry you've already added or removed yourself. Mirrors the behaviour of the companion `ant` tool.
+
 ## [1.11.0] - 2026-05-28
 
 ### Added
@@ -168,7 +173,8 @@ First stable release. Core feature set:
 - Forward-only schema migration system
 - Custom database path via `--db`
 
-[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.8.2...v1.9.0

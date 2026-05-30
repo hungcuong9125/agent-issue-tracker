@@ -3079,3 +3079,81 @@ func TestLogPurgeBeforeAndKeepMutuallyExclusive(t *testing.T) {
 		}
 	})
 }
+
+func TestOpenAddsAitToGitignoreInGitRepo(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("create .git: %v", err)
+	}
+	t.Chdir(root)
+
+	app, err := ait.Open(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer app.Close()
+
+	// Read via the resolved cwd to sidestep macOS /var -> /private/var symlinks.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(wd, ".gitignore"))
+	if err != nil {
+		t.Fatalf("expected .gitignore to be created: %v", err)
+	}
+	if !strings.Contains(string(data), ".ait/") {
+		t.Fatalf("expected .ait/ in .gitignore, got %q", string(data))
+	}
+}
+
+func TestOpenSkipsGitignoreOutsideGitRepo(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	app, err := ait.Open(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer app.Close()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wd, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("expected no .gitignore outside a git repo, got stat err: %v", err)
+	}
+}
+
+func TestOpenPreservesExistingGitignore(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("create .git: %v", err)
+	}
+	t.Chdir(root)
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	gitignore := filepath.Join(wd, ".gitignore")
+	if err := os.WriteFile(gitignore, []byte("vendor/\n"), 0o644); err != nil {
+		t.Fatalf("seed .gitignore: %v", err)
+	}
+
+	app, err := ait.Open(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer app.Close()
+
+	data, err := os.ReadFile(gitignore)
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	want := "vendor/\n.ait/\n"
+	if string(data) != want {
+		t.Fatalf("unexpected .gitignore:\n got %q\nwant %q", string(data), want)
+	}
+}

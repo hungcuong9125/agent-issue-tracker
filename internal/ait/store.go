@@ -29,8 +29,20 @@ func Open(ctx context.Context, dbPath string) (*App, error) {
 		// in-memory database. Safe now that no code path calls a.db while
 		// holding an open transaction.
 	} else {
-		if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		dir := filepath.Dir(dbPath)
+		_, statErr := os.Stat(dir)
+		dirExisted := statErr == nil
+
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, err
+		}
+
+		// The first time we create the data directory, make sure it is
+		// gitignored so the local issue database isn't committed.
+		if !dirExisted {
+			if err := ensureGitignoreForDB(dbPath); err != nil {
+				return nil, err
+			}
 		}
 	}
 

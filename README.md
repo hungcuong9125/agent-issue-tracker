@@ -52,7 +52,7 @@ The hierarchy is reflected in the ID structure: `proj-abc` (initiative) -> `proj
 
 The tool is not a replacement for a real issue tracker.  The workflow is envisioned as 'developer has a plan/issues/feature - gets the coding agent to plan them out (or does it themselves), then the actual coding agent manages the sub-epics/issues for that work alone.
 
-It's not designed to handle cross-team shared issues, work, projects.  The internal database should be added to .gitignore.
+It's not designed to handle cross-team shared issues, work, projects.  The internal database lives in `.ait/`, which `ait` adds to your `.gitignore` automatically the first time it runs in a git repository.
 
 ## Current Command Set
 
@@ -329,7 +329,7 @@ This means you can update the `ait` binary and your existing database will be up
 
 ## Local Storage
 
-The tool uses SQLite and creates a local database at `.ait/ait.db` in the current git repository root (or the current directory if no git root is found).
+The tool uses SQLite and creates a local database at `.ait/ait.db` in the current git repository root (or the current directory if no git root is found). The first time it creates that directory inside a git repository, it adds `.ait/` to the project's `.gitignore` so the database isn't committed. It only does this for the default location, and it never touches an entry you've already added or removed yourself.
 
 That database stores:
 

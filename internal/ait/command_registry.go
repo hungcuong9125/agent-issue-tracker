@@ -93,6 +93,9 @@ func registerCommands() []Command {
 
 Set or auto-generate the project prefix used for hierarchical issue IDs.
 
+The first time ait creates its .ait/ data directory in a git repository, it
+adds .ait/ to the project's .gitignore so the local database isn't committed.
+
 Flags:
   --prefix <value>   Set the prefix explicitly (e.g. "myproject")
 
