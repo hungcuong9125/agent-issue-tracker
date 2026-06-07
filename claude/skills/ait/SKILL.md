@@ -101,6 +101,25 @@ closed epic has open or in-progress children — something that probably needs
 human attention. Flag this to the user and suggest they review the skipped
 issues before deciding what to do.
 
+### Delete (mistakes only)
+```bash
+ait delete <id> --force             # permanently remove a single issue
+ait delete <id> --force --cascade   # remove the issue and its whole subtree
+```
+`delete` is for genuine mistakes — a fat-fingered duplicate, a throwaway, an
+issue created against the wrong parent. It is **irreversible** and, unlike
+flush, records **nothing**: the issue, its notes, and its dependency links are
+gone for good. The response is `{ "deleted": [refs] }`, listing exactly what
+was removed.
+
+It is deliberately guarded:
+- nothing happens without `--force`;
+- an issue that has children is refused unless you also pass `--cascade`.
+
+Reach for `cancel` or `close` (which keep an auditable record) when you're
+closing out real work. Use `delete` only when an issue genuinely should never
+have existed.
+
 ### Flush History
 ```bash
 ait log                           # summary: date, summary, root items, item count

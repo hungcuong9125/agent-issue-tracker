@@ -12,7 +12,9 @@ import (
 )
 
 type App struct {
-	db *sql.DB
+	db      *sql.DB
+	dbPath  string
+	created bool // db file (or in-memory db) did not exist before this session opened it
 }
 
 func Open(ctx context.Context, dbPath string) (*App, error) {
@@ -24,11 +26,19 @@ func Open(ctx context.Context, dbPath string) (*App, error) {
 		}
 	}
 
+	created := false
 	if dbPath == ":memory:" {
 		// Keep all queries on a single connection so they share the same
 		// in-memory database. Safe now that no code path calls a.db while
-		// holding an open transaction.
+		// holding an open transaction. An in-memory database is always fresh.
+		created = true
 	} else {
+		// Whether the database file already exists, so init can report
+		// whether it bootstrapped a new project or reopened an existing one.
+		if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
+			created = true
+		}
+
 		dir := filepath.Dir(dbPath)
 		_, statErr := os.Stat(dir)
 		dirExisted := statErr == nil
@@ -72,7 +82,7 @@ func Open(ctx context.Context, dbPath string) (*App, error) {
 		return nil, err
 	}
 
-	return &App{db: db}, nil
+	return &App{db: db, dbPath: dbPath, created: created}, nil
 }
 
 func (a *App) Close() error {
@@ -481,7 +491,8 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 
-	return syncPublicIDs(ctx, db, prefix, false)
+	_, err = syncPublicIDs(ctx, db, prefix, false)
+	return err
 }
 
 func dependencyAlreadyExists(err error) bool {
@@ -831,6 +842,68 @@ func (a *App) flushTerminalIssues(ctx context.Context, dryRun bool, summary stri
 	return result, nil
 }
 
+// DeleteResult is the JSON response returned by the delete command.
+type DeleteResult struct {
+	Deleted []IssueRef `json:"deleted"`
+}
+
+// deleteIssueTree permanently removes an issue and, when cascade is set, its
+// entire descendant subtree. Deletion runs bottom-up so the parent_id foreign
+// key (which has no ON DELETE action) is never violated; notes and dependency
+// links are removed by their own ON DELETE CASCADE. Unlike flush, this records
+// nothing — delete is the deliberate "this should never have existed" escape
+// hatch, not housekeeping of completed work.
+func (a *App) deleteIssueTree(ctx context.Context, internalID int64, cascade bool) (DeleteResult, error) {
+	result := DeleteResult{Deleted: make([]IssueRef, 0)}
+
+	root, err := a.fetchIssueRefByInternalID(ctx, internalID)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+
+	// fetchAllDescendants returns nodes parent-before-child (pre-order).
+	descendants, err := a.fetchAllDescendants(ctx, internalID)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+
+	if len(descendants) > 0 && !cascade {
+		return DeleteResult{}, &CLIError{
+			Code:     "validation",
+			Message:  fmt.Sprintf("issue %s has %d descendant issue(s); pass --cascade to delete the whole subtree", root.ID, len(descendants)),
+			ExitCode: 65,
+		}
+	}
+
+	// Resolve descendant internal IDs up front, then delete deepest-first so a
+	// parent is never removed while a child still references it.
+	descIDs := make([]int64, 0, len(descendants))
+	for _, d := range descendants {
+		descID, err := a.resolveIssueID(ctx, d.ID)
+		if err != nil {
+			return DeleteResult{}, err
+		}
+		descIDs = append(descIDs, descID)
+	}
+
+	for i := len(descIDs) - 1; i >= 0; i-- {
+		if _, err := a.db.ExecContext(ctx, `DELETE FROM issues WHERE id = ?`, descIDs[i]); err != nil {
+			return DeleteResult{}, err
+		}
+	}
+	if _, err := a.db.ExecContext(ctx, `DELETE FROM issues WHERE id = ?`, internalID); err != nil {
+		return DeleteResult{}, err
+	}
+
+	result.Deleted = append(result.Deleted, root)
+	for _, d := range descendants {
+		result.Deleted = append(result.Deleted, IssueRef{
+			ID: d.ID, Title: d.Title, Status: d.Status, Type: d.Type, Priority: d.Priority,
+		})
+	}
+	return result, nil
+}
+
 // closeReason extracts the close reason from an issue's notes, if any.
 // Close reasons are stored as notes with a "Closed: " prefix.
 func (a *App) closeReason(ctx context.Context, issueID int64) (string, error) {
@@ -1104,7 +1177,10 @@ func (a *App) allDescendantsTerminal(ctx context.Context, parentID int64) (bool,
 	return true, nil
 }
 
-func syncPublicIDs(ctx context.Context, db *sql.DB, prefix string, forceRoot bool) error {
+// syncPublicIDs reassigns hierarchical public IDs across the issue tree and
+// returns the number of issues whose public_id actually changed — the natural
+// "how many IDs did this re-key touch" signal surfaced by init.
+func syncPublicIDs(ctx context.Context, db *sql.DB, prefix string, forceRoot bool) (int, error) {
 	type issueNode struct {
 		id       int64
 		parentID sql.NullInt64
@@ -1118,7 +1194,7 @@ func syncPublicIDs(ctx context.Context, db *sql.DB, prefix string, forceRoot boo
 		 ORDER BY created_at ASC, id ASC`,
 	)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	nodes := make(map[int64]issueNode)
@@ -1129,7 +1205,7 @@ func syncPublicIDs(ctx context.Context, db *sql.DB, prefix string, forceRoot boo
 		var node issueNode
 		if err := rows.Scan(&node.id, &node.parentID, &node.publicID); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		nodes[node.id] = node
 		if node.parentID.Valid {
@@ -1140,16 +1216,17 @@ func syncPublicIDs(ctx context.Context, db *sql.DB, prefix string, forceRoot boo
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return err
+		return 0, err
 	}
 	rows.Close()
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 
+	rewritten := 0
 	var assign func(issueID int64, expected string) error
 	assign = func(issueID int64, expected string) error {
 		node := nodes[issueID]
@@ -1159,6 +1236,7 @@ func syncPublicIDs(ctx context.Context, db *sql.DB, prefix string, forceRoot boo
 			}
 			node.publicID = sql.NullString{String: expected, Valid: true}
 			nodes[issueID] = node
+			rewritten++
 		}
 
 		for idx, childID := range children[issueID] {
@@ -1179,14 +1257,17 @@ func syncPublicIDs(ctx context.Context, db *sql.DB, prefix string, forceRoot boo
 		} else {
 			expected, err = RootPublicID(prefix, issueID)
 			if err != nil {
-				return err
+				return 0, err
 			}
 		}
 
 		if err := assign(issueID, expected); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return rewritten, nil
 }

@@ -44,25 +44,39 @@ func (a *App) runInit(ctx context.Context, args []string) error {
 		return &CLIError{Code: "usage", Message: err.Error(), ExitCode: 64}
 	}
 
+	explicit := strings.TrimSpace(*prefix) != ""
+
 	var (
 		resolved string
 		err      error
 	)
 
-	if strings.TrimSpace(*prefix) == "" {
-		resolved, err = a.ensureProjectPrefix(ctx)
-	} else {
+	if explicit {
 		resolved, err = a.setProjectPrefix(ctx, *prefix)
+	} else {
+		resolved, err = a.ensureProjectPrefix(ctx)
 	}
 	if err != nil {
 		return err
 	}
 
-	if err := syncPublicIDs(ctx, a.db, resolved, strings.TrimSpace(*prefix) != ""); err != nil {
+	rekeyed, err := syncPublicIDs(ctx, a.db, resolved, explicit)
+	if err != nil {
 		return err
 	}
 
-	return PrintJSON(map[string]any{"prefix": resolved})
+	var schemaVersion int
+	if err := a.db.QueryRowContext(ctx, `SELECT version FROM schema_version WHERE id = 1`).Scan(&schemaVersion); err != nil {
+		return err
+	}
+
+	return PrintJSON(map[string]any{
+		"prefix":         resolved,
+		"db":             a.dbPath,
+		"schema_version": schemaVersion,
+		"created":        a.created,
+		"rekeyed":        rekeyed,
+	})
 }
 
 func (a *App) runConfig(ctx context.Context) error {
@@ -974,6 +988,51 @@ func (a *App) runCancel(ctx context.Context, args []string) error {
 		statusArgs = append(statusArgs, "--long")
 	}
 	return a.runStatusChange(ctx, statusArgs, StatusCancelled)
+}
+
+// runDelete permanently removes an issue. Deletion is irreversible and is not
+// recorded anywhere, so it is guarded behind --force; an issue with children
+// is refused unless --cascade is also given.
+func (a *App) runDelete(ctx context.Context, args []string) error {
+	force := false
+	cascade := false
+	positional := make([]string, 0, len(args))
+	for _, arg := range args {
+		switch arg {
+		case "--help", "-h":
+			PrintCommandHelp("delete")
+			return nil
+		case "--force":
+			force = true
+		case "--cascade":
+			cascade = true
+		default:
+			positional = append(positional, arg)
+		}
+	}
+
+	if len(positional) != 1 {
+		return &CLIError{Code: "usage", Message: "usage: ait delete <id> --force [--cascade]", ExitCode: 64}
+	}
+
+	internalID, err := a.resolveIssueID(ctx, positional[0])
+	if err != nil {
+		return err
+	}
+
+	if !force {
+		return &CLIError{
+			Code:     "confirmation",
+			Message:  "delete is permanent and unrecorded; it removes the issue along with its notes and dependency links. Re-run with --force to confirm.",
+			ExitCode: 65,
+		}
+	}
+
+	result, err := a.deleteIssueTree(ctx, internalID, cascade)
+	if err != nil {
+		return err
+	}
+	return PrintJSON(result)
 }
 
 func (a *App) runReopen(ctx context.Context, args []string) error {

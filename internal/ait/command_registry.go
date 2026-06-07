@@ -96,6 +96,10 @@ Set or auto-generate the project prefix used for hierarchical issue IDs.
 The first time ait creates its .ait/ data directory in a git repository, it
 adds .ait/ to the project's .gitignore so the local database isn't committed.
 
+Returns the resolved prefix, the database path, the schema version, whether
+this call created a fresh database (created), and how many existing issue IDs
+were rewritten when re-keying (rekeyed).
+
 Flags:
   --prefix <value>   Set the prefix explicitly (e.g. "myproject")
 
@@ -370,6 +374,35 @@ Examples:
 			NeedsDB: true,
 			Run: func(a *App, ctx context.Context, args []string) error {
 				return a.runCancel(ctx, args)
+			},
+		},
+		{
+			Name:    "delete",
+			Summary: "Permanently delete an issue",
+			Args:    "<id>",
+			Help: `Usage: ait delete <id> --force [--cascade]
+
+Permanently delete an issue. This is irreversible and, unlike flush, is NOT
+recorded anywhere — use it for genuine mistakes (a fat-fingered duplicate, a
+throwaway, an issue created against the wrong parent), not for closing out
+real work. Prefer cancel or close when you want an auditable record.
+
+Deletion is guarded: nothing happens without --force. An issue that has
+children is refused unless --cascade is also given, which removes the entire
+subtree. The issue's notes and dependency links are removed automatically.
+
+Flags:
+  --force     Confirm the deletion (required)
+  --cascade   Also delete all descendant issues
+
+Examples:
+  ait delete PROJ-7 --force
+  ait delete PROJ-3 --force --cascade
+`,
+			Flags:   []string{"--force", "--cascade"},
+			NeedsDB: true,
+			Run: func(a *App, ctx context.Context, args []string) error {
+				return a.runDelete(ctx, args)
 			},
 		},
 		{

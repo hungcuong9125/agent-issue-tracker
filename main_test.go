@@ -75,7 +75,7 @@ func TestCreateAndShowIssue(t *testing.T) {
 
 func TestInitSetsPrefixAndHierarchicalIDs(t *testing.T) {
 	testApp(t, func(ctx context.Context, a *ait.App) {
-		var initPayload map[string]string
+		var initPayload map[string]any
 		runJSONCommand(t, a, []string{"init", "--prefix", "deliveries"}, &initPayload)
 
 		if initPayload["prefix"] != "deliveries" {
@@ -3156,4 +3156,188 @@ func TestOpenPreservesExistingGitignore(t *testing.T) {
 	if string(data) != want {
 		t.Fatalf("unexpected .gitignore:\n got %q\nwant %q", string(data), want)
 	}
+}
+
+// --- init richer output ---
+
+func TestInitReportsCreatedAndRekeyCounts(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "ait.db")
+
+	// First session: a brand-new database file.
+	first, err := ait.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Open (first) failed: %v", err)
+	}
+	var freshInit map[string]any
+	runJSONCommand(t, first, []string{"init", "--prefix", "alpha"}, &freshInit)
+
+	if freshInit["prefix"] != "alpha" {
+		t.Fatalf("expected prefix alpha, got %v", freshInit["prefix"])
+	}
+	if freshInit["db"] != dbPath {
+		t.Fatalf("expected db %q, got %v", dbPath, freshInit["db"])
+	}
+	if created, _ := freshInit["created"].(bool); !created {
+		t.Fatalf("expected created=true on a fresh database, got %v", freshInit["created"])
+	}
+	if rekeyed, _ := freshInit["rekeyed"].(float64); rekeyed != 0 {
+		t.Fatalf("expected rekeyed=0 on a fresh database, got %v", freshInit["rekeyed"])
+	}
+	if version, _ := freshInit["schema_version"].(float64); version < 1 {
+		t.Fatalf("expected a positive schema_version, got %v", freshInit["schema_version"])
+	}
+
+	runJSONCommand[map[string]any](t, first, []string{"create", "--title", "One"}, nil)
+	runJSONCommand[map[string]any](t, first, []string{"create", "--title", "Two"}, nil)
+	first.Close()
+
+	// Second session: the file already exists, and we re-key two issues.
+	second, err := ait.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Open (second) failed: %v", err)
+	}
+	defer second.Close()
+
+	var rekeyInit map[string]any
+	runJSONCommand(t, second, []string{"init", "--prefix", "beta"}, &rekeyInit)
+
+	if created, _ := rekeyInit["created"].(bool); created {
+		t.Fatalf("expected created=false when reopening an existing database, got %v", rekeyInit["created"])
+	}
+	if rekeyed, _ := rekeyInit["rekeyed"].(float64); rekeyed != 2 {
+		t.Fatalf("expected rekeyed=2 after re-keying two issues, got %v", rekeyInit["rekeyed"])
+	}
+}
+
+// --- delete ---
+
+func TestDeleteRequiresForce(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var issue ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Oops"}, &issue)
+
+		err := runExpectError(t, a, []string{"delete", issue.ID})
+		if err == nil {
+			t.Fatal("expected delete without --force to be refused")
+		}
+		if !strings.Contains(err.Error(), "--force") {
+			t.Fatalf("expected the refusal to mention --force, got: %s", err.Error())
+		}
+
+		// The issue must still exist.
+		if err := runExpectError(t, a, []string{"show", issue.ID}); err != nil {
+			t.Fatalf("expected issue to survive a refused delete, got: %v", err)
+		}
+	})
+}
+
+func TestDeleteForceRemovesIssue(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var issue ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Throwaway"}, &issue)
+
+		var res struct {
+			Deleted []ait.IssueRef `json:"deleted"`
+		}
+		runJSONCommand(t, a, []string{"delete", issue.ID, "--force"}, &res)
+
+		if len(res.Deleted) != 1 || res.Deleted[0].ID != issue.ID {
+			t.Fatalf("expected %s in deleted, got %+v", issue.ID, res.Deleted)
+		}
+
+		if err := runExpectError(t, a, []string{"show", issue.ID}); err == nil {
+			t.Fatal("expected the issue to be gone after a forced delete")
+		}
+	})
+}
+
+func TestDeleteRefusesParentWithoutCascade(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var epic ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Epic", "--type", "epic"}, &epic)
+		var child ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Child", "--parent", epic.ID}, &child)
+
+		err := runExpectError(t, a, []string{"delete", epic.ID, "--force"})
+		if err == nil {
+			t.Fatal("expected delete of a parent to be refused without --cascade")
+		}
+		if !strings.Contains(err.Error(), "--cascade") {
+			t.Fatalf("expected the refusal to mention --cascade, got: %s", err.Error())
+		}
+
+		// Both must still exist.
+		if err := runExpectError(t, a, []string{"show", epic.ID}); err != nil {
+			t.Fatalf("expected epic to survive a refused delete, got: %v", err)
+		}
+		if err := runExpectError(t, a, []string{"show", child.ID}); err != nil {
+			t.Fatalf("expected child to survive a refused delete, got: %v", err)
+		}
+	})
+}
+
+func TestDeleteCascadeRemovesSubtree(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var epic ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Epic", "--type", "epic"}, &epic)
+		var child ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Child", "--parent", epic.ID}, &child)
+		var grandchild ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Grandchild", "--parent", child.ID}, &grandchild)
+
+		var res struct {
+			Deleted []ait.IssueRef `json:"deleted"`
+		}
+		runJSONCommand(t, a, []string{"delete", epic.ID, "--force", "--cascade"}, &res)
+
+		if len(res.Deleted) != 3 {
+			t.Fatalf("expected 3 deleted issues, got %d: %+v", len(res.Deleted), res.Deleted)
+		}
+
+		for _, id := range []string{epic.ID, child.ID, grandchild.ID} {
+			if err := runExpectError(t, a, []string{"show", id}); err == nil {
+				t.Fatalf("expected %s to be gone after cascade delete", id)
+			}
+		}
+	})
+}
+
+func TestDeleteCascadesDependencyLinks(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		var blocked ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Blocked"}, &blocked)
+		var blocker ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", "Blocker"}, &blocker)
+
+		runJSONCommand[map[string]any](t, a, []string{"dep", "add", blocked.ID, blocker.ID}, nil)
+
+		// Deleting the blocker should remove the dependency row too.
+		runJSONCommand[map[string]any](t, a, []string{"delete", blocker.ID, "--force"}, nil)
+
+		var depList struct {
+			Blockers []ait.IssueRef `json:"blockers"`
+		}
+		runJSONCommand(t, a, []string{"dep", "list", blocked.ID}, &depList)
+		if len(depList.Blockers) != 0 {
+			t.Fatalf("expected the dependency link to cascade away, got %d blockers", len(depList.Blockers))
+		}
+
+		// The surviving issue is untouched.
+		if err := runExpectError(t, a, []string{"show", blocked.ID}); err != nil {
+			t.Fatalf("expected blocked issue to survive, got: %v", err)
+		}
+	})
+}
+
+func TestDeleteNotFound(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		err := runExpectError(t, a, []string{"delete", "nope-9999", "--force"})
+		if err == nil {
+			t.Fatal("expected not_found error for a missing issue")
+		}
+		if !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("expected a not-found message, got: %s", err.Error())
+		}
+	})
 }

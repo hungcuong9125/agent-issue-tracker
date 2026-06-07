@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-06-07
+
+### Added
+- `delete <id> --force` (with `--cascade` for subtrees) — a narrow, guarded way to permanently remove a genuine mistake: a fat-fingered duplicate, a throwaway, an issue created against the wrong parent. Until now the only options were `cancel` (which leaves a visible stub forever) and `flush` (which won't touch an issue while its root tree is still open), so an honest slip lingered in every `--all` listing for the life of the project. `delete` is deliberately guarded — nothing happens without `--force`, and an issue that has children is refused unless you also pass `--cascade` — and, unlike `flush`, it records nothing: it's the "this should never have existed" escape hatch, not housekeeping of completed work. Notes and dependency links are cascade-removed automatically, and the response lists exactly what was deleted.
+- `init` (and re-keying) now returns more than just the prefix: `db` (the resolved database path), `schema_version`, `created` (whether this call opened a fresh database), and `rekeyed` (how many existing issue IDs were rewritten). Re-keying rewrites every ID in the project — a consequential, once-in-a-while operation — and the previous single-word `{"prefix": "…"}` reply gave no way to tell a fresh database from a re-key, how many IDs it touched, or where the database lives. The new fields are purely additive, so anything reading `.prefix` keeps working.
+
 ## [1.12.0] - 2026-05-30
 
 ### Added
