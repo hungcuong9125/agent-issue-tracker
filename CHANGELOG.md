@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-12
+
+### Changed
+- Commands no longer silently create the database — a breaking change. Every DB-backed command except `init` now refuses to run until `ait init` has been done, returning `{"error": {"code": "uninitialised", "message": "no ait database at <path> — run 'ait init' first"}}` with exit code 1. Previously a stray `ait list` in the wrong directory quietly bootstrapped `.ait/ait.db` (and, in a git repository, edited that repo's `.gitignore`) — and its empty-looking response couldn't be told apart from "this project uses ait and has nothing open", so an agent could happily start filing issues in a project that never used ait at all. The error code, exit code, and message shape all match `ant`, so an agent hopping between the two tools sees one contract. `--db :memory:` remains exempt.
+- Errors now go to stderr — also breaking. The JSON `{"error": …}` envelope used to share stdout with data, so a pipeline like `ait list | jq '.issues[]'` or an `$(ait export …)` capture would ingest an error as if it were data. stdout now only ever carries data; failures are the envelope on stderr plus a non-zero exit code, matching `ant` and every other JSON-speaking CLI (gh, kubectl, aws). Scripts that parsed errors from stdout need `2>&1`.
+- `init` now tops up the `.gitignore` entry on every run rather than only when first creating `.ait/`, so an entry that's been lost (or a project that gained a `.git` since init) is repaired by re-running `ait init`. An unwritable `.gitignore` warns on stderr instead of failing the whole init — the database is already set up by that point.
+
+### Added
+- `init` reports what the `.gitignore` step did: `gitignore_updated: true` when the entry was added this run, and a `note` field (`"no .git directory — not adding .ait/ to .gitignore"`) when there was no repository to add it to. A quick `ait init` in a brand-new project now tells you about the gap up front, instead of leaving it to be discovered at the first `git status` after `git init`. Both fields mirror `ant init`.
+
+### Fixed
+- An unknown command (`ait lst`, say) no longer creates the database as a side effect. main opened the database before the command name was checked, so even a typo bootstrapped `.ait/`; unknown commands are now rejected (usage error, exit 64) before the database is touched.
+
 ## [1.13.0] - 2026-06-07
 
 ### Added
@@ -179,7 +192,9 @@ First stable release. Core feature set:
 - Forward-only schema migration system
 - Custom database path via `--db`
 
-[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.13.0...v1.14.0
+[1.13.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.9.0...v1.10.0
