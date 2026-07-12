@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -248,10 +249,14 @@ func CommandNameForStatus(status string) string {
 	}
 }
 
-func PrintJSON(v any) error {
-	encoder := json.NewEncoder(os.Stdout)
+func writeJSON(w io.Writer, v any) error {
+	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(v)
+}
+
+func PrintJSON(v any) error {
+	return writeJSON(os.Stdout, v)
 }
 
 func NormalizeError(err error) *CLIError {
@@ -271,11 +276,14 @@ func NormalizeError(err error) *CLIError {
 	}
 }
 
-// WriteError emits the JSON {"error": {...}} envelope without exiting. Used
-// by main when an error already carries a specific exit code (via
-// ExitWithCode) but still has a real cause worth surfacing to the caller.
+// WriteError emits the JSON {"error": {...}} envelope to stderr without
+// exiting. stdout stays data-only so pipelines and $(...) captures fail
+// clean on error — the contract ant follows, and matching it keeps the two
+// tools interchangeable for agents. Used by main when an error already
+// carries a specific exit code (via ExitWithCode) but still has a real cause
+// worth surfacing to the caller.
 func WriteError(err *CLIError) {
-	_ = PrintJSON(map[string]any{
+	_ = writeJSON(os.Stderr, map[string]any{
 		"error": map[string]any{
 			"code":    err.Code,
 			"message": err.Message,

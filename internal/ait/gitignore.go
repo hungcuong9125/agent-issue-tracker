@@ -11,28 +11,31 @@ import (
 // local issue database in .ait/ is not committed.
 const gitignoreEntry = ".ait/"
 
-// ensureGitignoreForDB adds .ait/ to the project's .gitignore the first time
-// ait creates its data directory. It is deliberately conservative: it only
-// acts when the database is at the default location (.ait/ait.db) inside a git
-// repository, leaving custom --db paths and non-git directories untouched.
-func ensureGitignoreForDB(dbPath string) error {
+// ensureGitignoreForDB adds .ait/ to the project's .gitignore. init calls it
+// on every run, so a lost entry is restored. It is deliberately conservative:
+// it only acts when the database is at the default location (.ait/ait.db)
+// inside a git repository, leaving custom --db paths and non-git directories
+// untouched. It reports whether the entry was added and — so init can surface
+// the gap in its output — whether it was skipped because there is no .git
+// directory.
+func ensureGitignoreForDB(dbPath string) (updated bool, noGit bool, err error) {
 	root, err := ProjectRoot()
 	if err != nil {
-		return err
+		return false, false, err
 	}
 
 	// Only manage .gitignore for the default database location.
 	if dbPath != filepath.Join(root, ".ait", "ait.db") {
-		return nil
+		return false, false, nil
 	}
 
 	// Nothing to ignore if this isn't a git repository.
 	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
-		return nil
+		return false, true, nil
 	}
 
-	_, err = ensureGitignore(root)
-	return err
+	updated, err = ensureGitignore(root)
+	return updated, false, err
 }
 
 // ensureGitignore makes sure the .gitignore at root ignores ait's data

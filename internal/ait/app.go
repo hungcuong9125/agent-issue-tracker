@@ -22,11 +22,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 
 	cmd, ok := LookupCommand(args[0])
 	if !ok {
-		return &CLIError{
-			Code:     "usage",
-			Message:  fmt.Sprintf("unknown command %q", args[0]),
-			ExitCode: 64,
-		}
+		return UnknownCommandError(args[0])
 	}
 	return cmd.Run(a, ctx, args[1:])
 }
@@ -70,13 +66,27 @@ func (a *App) runInit(ctx context.Context, args []string) error {
 		return err
 	}
 
-	return PrintJSON(map[string]any{
+	// An unwritable .gitignore shouldn't fail the init itself — the database
+	// is already set up by this point. Warn and carry on, as ant does.
+	gitignoreUpdated, noGit, gerr := ensureGitignoreForDB(a.dbPath)
+	if gerr != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not update .gitignore: %v\n", gerr)
+	}
+
+	out := map[string]any{
 		"prefix":         resolved,
 		"db":             a.dbPath,
 		"schema_version": schemaVersion,
 		"created":        a.created,
 		"rekeyed":        rekeyed,
-	})
+	}
+	if gitignoreUpdated {
+		out["gitignore_updated"] = true
+	}
+	if noGit {
+		out["note"] = "no .git directory — not adding .ait/ to .gitignore"
+	}
+	return PrintJSON(out)
 }
 
 func (a *App) runConfig(ctx context.Context) error {
@@ -1571,10 +1581,10 @@ func (a *App) runLog(ctx context.Context, args []string) error {
 		for _, item := range e.Items {
 			if isSearching || item.ParentPublicID == nil {
 				s.Items = append(s.Items, FlushHistoryItemRef{
-					PublicID:  item.PublicID,
-					Type:      item.Type,
-					Title:     item.Title,
-					Priority:  item.Priority,
+					PublicID: item.PublicID,
+					Type:     item.Type,
+					Title:    item.Title,
+					Priority: item.Priority,
 				})
 			}
 		}
@@ -1605,4 +1615,3 @@ func (a *App) runLogPurge(ctx context.Context, args []string) error {
 
 	return PrintJSON(result)
 }
-

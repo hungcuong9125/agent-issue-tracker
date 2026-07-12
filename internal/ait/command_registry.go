@@ -88,17 +88,21 @@ func registerCommands() []Command {
 	return []Command{
 		{
 			Name:    "init",
-			Summary: "Set project prefix for issue IDs",
+			Summary: "Create the project database and set the ID prefix",
 			Help: `Usage: ait init [--prefix <value>]
 
-Set or auto-generate the project prefix used for hierarchical issue IDs.
+Create the project database (.ait/ait.db) and set or auto-generate the
+project prefix used for hierarchical issue IDs. Every other DB-backed command
+refuses with an "uninitialised" error until init has been run once.
 
-The first time ait creates its .ait/ data directory in a git repository, it
-adds .ait/ to the project's .gitignore so the local database isn't committed.
+In a git repository, init also makes sure .ait/ is in the project's
+.gitignore so the local database isn't committed. Outside one, the JSON
+output carries a note saying the .gitignore step was skipped.
 
 Returns the resolved prefix, the database path, the schema version, whether
-this call created a fresh database (created), and how many existing issue IDs
-were rewritten when re-keying (rekeyed).
+this call created a fresh database (created), how many existing issue IDs
+were rewritten when re-keying (rekeyed), and whether the .gitignore entry
+was added this run (gitignore_updated).
 
 Flags:
   --prefix <value>   Set the prefix explicitly (e.g. "myproject")

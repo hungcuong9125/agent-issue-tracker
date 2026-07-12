@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
 	"strings"
-	_ "modernc.org/sqlite"
 )
 
 type App struct {
@@ -39,20 +39,8 @@ func Open(ctx context.Context, dbPath string) (*App, error) {
 			created = true
 		}
 
-		dir := filepath.Dir(dbPath)
-		_, statErr := os.Stat(dir)
-		dirExisted := statErr == nil
-
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 			return nil, err
-		}
-
-		// The first time we create the data directory, make sure it is
-		// gitignored so the local issue database isn't committed.
-		if !dirExisted {
-			if err := ensureGitignoreForDB(dbPath); err != nil {
-				return nil, err
-			}
 		}
 	}
 
@@ -83,6 +71,37 @@ func Open(ctx context.Context, dbPath string) (*App, error) {
 	}
 
 	return &App{db: db, dbPath: dbPath, created: created}, nil
+}
+
+// RequireInitialised returns the "uninitialised" error when the database file
+// behind dbPath does not exist yet. main calls this before Open for every
+// command except init, so a query like `ait list` in a fresh project refuses
+// with a pointer to `ait init` instead of silently bootstrapping a database.
+// The error contract (code "uninitialised", exit 1, message shape) matches
+// ant's, so an agent hopping between the two tools sees the same signal.
+// An empty dbPath resolves to the default project location; ":memory:"
+// databases are always fresh, so they are exempt.
+func RequireInitialised(dbPath string) error {
+	if dbPath == ":memory:" {
+		return nil
+	}
+	if dbPath == "" {
+		var err error
+		dbPath, err = DatabasePath()
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return &CLIError{
+			Code:     "uninitialised",
+			Message:  fmt.Sprintf("no ait database at %s — run 'ait init' first", dbPath),
+			ExitCode: 1,
+		}
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (a *App) Close() error {
@@ -1073,8 +1092,8 @@ func (a *App) fetchFlushHistory(ctx context.Context, limit int, since string) ([
 
 // PurgeResult is the JSON response returned by log purge.
 type PurgeResult struct {
-	EntriesPurged int `json:"entries_purged"`
-	ItemsRemoved  int `json:"items_removed"`
+	EntriesPurged int  `json:"entries_purged"`
+	ItemsRemoved  int  `json:"items_removed"`
 	Compact       bool `json:"compact"`
 }
 

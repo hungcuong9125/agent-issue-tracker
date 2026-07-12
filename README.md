@@ -52,7 +52,7 @@ The hierarchy is reflected in the ID structure: `proj-abc` (initiative) -> `proj
 
 The tool is not a replacement for a real issue tracker.  The workflow is envisioned as 'developer has a plan/issues/feature - gets the coding agent to plan them out (or does it themselves), then the actual coding agent manages the sub-epics/issues for that work alone.
 
-It's not designed to handle cross-team shared issues, work, projects.  The internal database lives in `.ait/`, which `ait` adds to your `.gitignore` automatically the first time it runs in a git repository.
+It's not designed to handle cross-team shared issues, work, projects.  The internal database lives in `.ait/`, which is created by an explicit `ait init` — every other command refuses with an `uninitialised` error (exit code 1) until then, so a stray `ait list` in the wrong directory never leaves a database behind.  In a git repository, `init` also adds `.ait/` to your `.gitignore`; outside one, its JSON output carries a `note` saying the `.gitignore` step was skipped.
 
 ## Current Command Set
 
@@ -291,7 +291,9 @@ When adding a dependency with `dep add`, the tool performs a transitive reachabi
 
 ## Initialisation And IDs
 
-Run `ait init --prefix <value>` to set the project prefix used for public issue IDs.
+Run `ait init` once per project to create the database — until then, every other command returns an `uninitialised` error pointing you at it.  Use `--prefix <value>` to set the project prefix used for public issue IDs (it defaults to the project directory name).
+
+Errors are emitted as a JSON `{"error": {"code", "message"}}` envelope on **stderr** with a non-zero exit code — stdout only ever carries data.  This matches `ant`, so scripts and agents can treat the two tools identically.
 
 Examples:
 

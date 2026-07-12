@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,14 @@ import (
 	"agent-issue-tracker/internal/ait"
 	_ "modernc.org/sqlite"
 )
+
+// initResult decodes the JSON payload emitted by `ait init`.
+type initResult struct {
+	Prefix           string `json:"prefix"`
+	Created          bool   `json:"created"`
+	GitignoreUpdated bool   `json:"gitignore_updated"`
+	Note             string `json:"note"`
+}
 
 func TestStatusInitializesEmptyDatabase(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -376,7 +385,6 @@ func testApp(t *testing.T, fn func(ctx context.Context, a *ait.App)) {
 
 	fn(ctx, app)
 }
-
 
 func runJSONCommand[T any](t *testing.T, a *ait.App, args []string, target *T) {
 	t.Helper()
@@ -873,7 +881,7 @@ func TestDepAddAndList(t *testing.T) {
 		runJSONCommand(t, a, []string{"create", "--title", "Issue B"}, &a2)
 
 		var depList struct {
-			IssueID  string        `json:"issue_id"`
+			IssueID  string         `json:"issue_id"`
 			Blockers []ait.IssueRef `json:"blockers"`
 			Blocks   []ait.IssueRef `json:"blocks"`
 		}
@@ -3080,7 +3088,7 @@ func TestLogPurgeBeforeAndKeepMutuallyExclusive(t *testing.T) {
 	})
 }
 
-func TestOpenAddsAitToGitignoreInGitRepo(t *testing.T) {
+func TestInitAddsAitToGitignoreInGitRepo(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create .git: %v", err)
@@ -3092,6 +3100,15 @@ func TestOpenAddsAitToGitignoreInGitRepo(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 	defer app.Close()
+
+	var res initResult
+	runJSONCommand(t, app, []string{"init"}, &res)
+	if !res.GitignoreUpdated {
+		t.Fatalf("expected gitignore_updated=true, got %+v", res)
+	}
+	if res.Note != "" {
+		t.Fatalf("expected no note inside a git repo, got %q", res.Note)
+	}
 
 	// Read via the resolved cwd to sidestep macOS /var -> /private/var symlinks.
 	wd, err := os.Getwd()
@@ -3105,9 +3122,17 @@ func TestOpenAddsAitToGitignoreInGitRepo(t *testing.T) {
 	if !strings.Contains(string(data), ".ait/") {
 		t.Fatalf("expected .ait/ in .gitignore, got %q", string(data))
 	}
+
+	// A second init leaves the existing entry alone. Fresh struct: the
+	// field is omitted when false, so a reused one would keep the old true.
+	res = initResult{}
+	runJSONCommand(t, app, []string{"init"}, &res)
+	if res.GitignoreUpdated {
+		t.Fatalf("expected gitignore_updated to be false on re-init, got %+v", res)
+	}
 }
 
-func TestOpenSkipsGitignoreOutsideGitRepo(t *testing.T) {
+func TestInitNotesSkippedGitignoreOutsideGitRepo(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 
@@ -3116,6 +3141,15 @@ func TestOpenSkipsGitignoreOutsideGitRepo(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 	defer app.Close()
+
+	var res initResult
+	runJSONCommand(t, app, []string{"init"}, &res)
+	if res.GitignoreUpdated {
+		t.Fatalf("expected gitignore_updated=false outside a git repo, got %+v", res)
+	}
+	if !strings.Contains(res.Note, ".gitignore") {
+		t.Fatalf("expected a note explaining the skipped .gitignore, got %q", res.Note)
+	}
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -3126,7 +3160,7 @@ func TestOpenSkipsGitignoreOutsideGitRepo(t *testing.T) {
 	}
 }
 
-func TestOpenPreservesExistingGitignore(t *testing.T) {
+func TestInitPreservesExistingGitignore(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create .git: %v", err)
@@ -3148,6 +3182,8 @@ func TestOpenPreservesExistingGitignore(t *testing.T) {
 	}
 	defer app.Close()
 
+	runJSONCommand(t, app, []string{"init"}, &initResult{})
+
 	data, err := os.ReadFile(gitignore)
 	if err != nil {
 		t.Fatalf("read .gitignore: %v", err)
@@ -3155,6 +3191,66 @@ func TestOpenPreservesExistingGitignore(t *testing.T) {
 	want := "vendor/\n.ait/\n"
 	if string(data) != want {
 		t.Fatalf("unexpected .gitignore:\n got %q\nwant %q", string(data), want)
+	}
+}
+
+// --- uninitialised refusal ---
+
+func TestRequireInitialisedRefusesMissingDatabase(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), ".ait", "ait.db")
+
+	err := ait.RequireInitialised(dbPath)
+	var cliErr *ait.CLIError
+	if !errors.As(err, &cliErr) {
+		t.Fatalf("expected *ait.CLIError, got %v", err)
+	}
+	if cliErr.Code != "uninitialised" {
+		t.Fatalf("expected code uninitialised, got %q", cliErr.Code)
+	}
+	if cliErr.ExitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", cliErr.ExitCode)
+	}
+	if !strings.Contains(cliErr.Message, "ait init") || !strings.Contains(cliErr.Message, dbPath) {
+		t.Fatalf("expected message pointing at %s and 'ait init', got %q", dbPath, cliErr.Message)
+	}
+
+	// The check must never create anything on disk.
+	if _, err := os.Stat(filepath.Dir(dbPath)); !os.IsNotExist(err) {
+		t.Fatalf("expected .ait/ to not exist after refusal, got stat err: %v", err)
+	}
+}
+
+func TestRequireInitialisedResolvesDefaultPath(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	err := ait.RequireInitialised("")
+	var cliErr *ait.CLIError
+	if !errors.As(err, &cliErr) {
+		t.Fatalf("expected *ait.CLIError, got %v", err)
+	}
+	if cliErr.Code != "uninitialised" {
+		t.Fatalf("expected code uninitialised, got %q", cliErr.Code)
+	}
+	if !strings.Contains(cliErr.Message, filepath.Join(".ait", "ait.db")) {
+		t.Fatalf("expected message naming the default db path, got %q", cliErr.Message)
+	}
+}
+
+func TestRequireInitialisedAllowsMemoryAndExistingDatabases(t *testing.T) {
+	if err := ait.RequireInitialised(":memory:"); err != nil {
+		t.Fatalf("expected :memory: to be exempt, got %v", err)
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "ait.db")
+	app, err := ait.Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	app.Close()
+
+	if err := ait.RequireInitialised(dbPath); err != nil {
+		t.Fatalf("expected existing database to pass, got %v", err)
 	}
 }
 

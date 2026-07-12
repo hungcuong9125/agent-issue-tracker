@@ -30,11 +30,22 @@ func main() {
 	}
 
 	cmd, ok := ait.LookupCommand(args[0])
-	if ok && !cmd.NeedsDB {
+	if !ok {
+		handleExit(ait.UnknownCommandError(args[0]))
+	}
+	if !cmd.NeedsDB {
 		if err := cmd.Run(nil, ctx, args[1:]); err != nil {
 			handleExit(err)
 		}
 		return
+	}
+
+	// Every DB-backed command except init refuses to run until the database
+	// exists — only an explicit `ait init` creates it.
+	if cmd.Name != "init" {
+		if err := ait.RequireInitialised(dbPath); err != nil {
+			handleExit(err)
+		}
 	}
 
 	app, err := ait.Open(ctx, dbPath)

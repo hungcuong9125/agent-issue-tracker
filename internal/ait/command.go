@@ -40,6 +40,17 @@ func LookupCommand(name string) (*Command, bool) {
 	return cmd, ok
 }
 
+// UnknownCommandError is the usage error for a command name that isn't in the
+// registry. Exported so main can reject unknown commands before opening the
+// database — a typo must never create .ait/ as a side effect.
+func UnknownCommandError(name string) *CLIError {
+	return &CLIError{
+		Code:     "usage",
+		Message:  fmt.Sprintf("unknown command %q", name),
+		ExitCode: 64,
+	}
+}
+
 // CommandNames returns all command names (including aliases) in registration order.
 func CommandNames() []string {
 	var names []string

@@ -201,6 +201,9 @@ three-tier setup: `proj-abc` (initiative) -> `proj-abc.1` (epic) -> `proj-abc.1.
 ## Output Modes
 
 By default all commands return JSON — compact and token-efficient for agents.
+Data goes to stdout; failures are a JSON `{"error": {"code", "message"}}`
+envelope on **stderr** with a non-zero exit code, so pipelines and `$(...)`
+captures never ingest an error as data. Same contract as `ant`.
 
 - `--long` adds all fields (description, timestamps, claimed_by, etc.)
 - `--human` gives a compact tabular view grouped by epic
@@ -228,10 +231,23 @@ omitted when nothing is hidden.
 ## Initialisation
 
 ```bash
-ait init --prefix myproject    # Set the project prefix for issue IDs
+ait init --prefix myproject    # Create the database and set the ID prefix
 ```
+`init` is the only command that creates the database. Every other command
+refuses until it has been run once, returning exit code 1 and:
+
+```json
+{"error": {"code": "uninitialised", "message": "no ait database at <path> — run 'ait init' first"}}
+```
+
+If you hit this, don't just run `init` reflexively — a project without an ait
+database may simply not use ait. Check with the user before initialising a
+project that isn't yours.
+
 If no prefix is set, one is inferred from the directory name. The prefix can be
 changed later with `init --prefix` — existing IDs are re-keyed automatically.
+In a git repository, `init` also ensures `.ait/` is in `.gitignore`; outside
+one, its output carries a `note` saying that step was skipped.
 
 ## Custom Database Path
 
