@@ -293,6 +293,8 @@ func (a *App) runList(ctx context.Context, args []string) error {
 	long := fs.Bool("long", false, "")
 	human := fs.Bool("human", false, "")
 	tree := fs.Bool("tree", false, "")
+	limit := fs.Int("limit", 0, "")
+	offset := fs.Int("offset", 0, "")
 	fs.SetOutput(io.Discard)
 
 	if err := fs.Parse(args); err != nil {
@@ -301,6 +303,40 @@ func (a *App) runList(ctx context.Context, args []string) error {
 			return nil
 		}
 		return &CLIError{Code: "usage", Message: err.Error(), ExitCode: 64}
+	}
+
+	// Detect whether --limit was passed at all: limit=0 is the zero value, so
+	// an explicit --limit 0 must be distinguished from an omitted flag. When
+	// --limit is omitted entirely the queries run without LIMIT/OFFSET and the
+	// JSON response keeps its original shape (no total_count/has_more keys).
+	limitRequested := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "limit" {
+			limitRequested = true
+		}
+	})
+	if limitRequested && *limit <= 0 {
+		return &CLIError{Code: "usage", Message: "--limit must be a positive integer", ExitCode: 64}
+	}
+	if *offset < 0 {
+		return &CLIError{Code: "usage", Message: "--offset must be a non-negative integer", ExitCode: 64}
+	}
+	if !limitRequested && *offset != 0 {
+		return &CLIError{Code: "usage", Message: "--offset requires --limit", ExitCode: 64}
+	}
+	// Pagination applies to --human because it renders a flat ordered list,
+	// but not to --tree: a partial page breaks parent/child hierarchy
+	// rendering (children can appear without their parents), so the
+	// combination is rejected outright.
+	if *tree && (limitRequested || *offset != 0) {
+		return &CLIError{Code: "usage", Message: "--limit/--offset are not supported with --tree: tree rendering requires the full hierarchy", ExitCode: 64}
+	}
+
+	appendPagination := func(query string) (string, []any) {
+		if !limitRequested {
+			return query, nil
+		}
+		return query + ` LIMIT ? OFFSET ?`, []any{*limit, *offset}
 	}
 	if *human && *tree {
 		return &CLIError{Code: "usage", Message: "--human and --tree are mutually exclusive", ExitCode: 64}
@@ -366,7 +402,8 @@ func (a *App) runList(ctx context.Context, args []string) error {
 			`SELECT %s FROM issues i LEFT JOIN issues parent ON parent.id = i.parent_id%s ORDER BY i.created_at ASC`,
 			issueSelectColumns("i"), where,
 		)
-		items, err := a.queryIssues(ctx, query, params...)
+		query, paginationParams := appendPagination(query)
+		items, err := a.queryIssues(ctx, query, append(params, paginationParams...)...)
 		if err != nil {
 			return err
 		}
@@ -387,18 +424,34 @@ func (a *App) runList(ctx context.Context, args []string) error {
 		hiddenCount = count
 	}
 
+	// total_count is only computed when the caller paginates: it counts every
+	// row matching the filter clauses, ignoring LIMIT/OFFSET, so the caller
+	// can derive has_more and page counts without a second query.
+	totalCount := 0
+	if limitRequested {
+		countQuery := "SELECT COUNT(*) FROM issues i" + where
+		if err := a.db.QueryRowContext(ctx, countQuery, params...).Scan(&totalCount); err != nil {
+			return err
+		}
+	}
+
 	if *long {
 		query := fmt.Sprintf(
 			`SELECT %s FROM issues i LEFT JOIN issues parent ON parent.id = i.parent_id%s ORDER BY i.created_at ASC`,
 			issueSelectColumns("i"), where,
 		)
-		items, err := a.queryIssues(ctx, query, params...)
+		query, paginationParams := appendPagination(query)
+		items, err := a.queryIssues(ctx, query, append(params, paginationParams...)...)
 		if err != nil {
 			return err
 		}
 		response := map[string]any{"issues": items}
 		if defaultFilterActive {
 			response["hidden_count"] = hiddenCount
+		}
+		if limitRequested {
+			response["total_count"] = totalCount
+			response["has_more"] = *offset+len(items) < totalCount
 		}
 		return PrintJSON(response)
 	}
@@ -407,13 +460,18 @@ func (a *App) runList(ctx context.Context, args []string) error {
 		`SELECT %s FROM issues i%s ORDER BY i.created_at ASC`,
 		issueRefSelectColumns("i"), where,
 	)
-	items, err := a.queryIssueRefs(ctx, query, params...)
+	query, paginationParams := appendPagination(query)
+	items, err := a.queryIssueRefs(ctx, query, append(params, paginationParams...)...)
 	if err != nil {
 		return err
 	}
 	response := map[string]any{"issues": items}
 	if defaultFilterActive {
 		response["hidden_count"] = hiddenCount
+	}
+	if limitRequested {
+		response["total_count"] = totalCount
+		response["has_more"] = *offset+len(items) < totalCount
 	}
 	return PrintJSON(response)
 }
@@ -494,29 +552,95 @@ func (a *App) runSearch(ctx context.Context, args []string) error {
 		PrintCommandHelp("search")
 		return nil
 	}
-	if len(args) != 1 {
+
+	// The query is a positional argument, so Go's flag package would stop
+	// parsing at it ("ait search auth --limit 2"). Pre-scan for the known
+	// pagination flags ourselves so they work on either side of the query,
+	// while anything else (including tokens starting with "-") stays a
+	// positional keyword, preserving the old behavior.
+	var flagArgs []string
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--limit" || args[i] == "--offset":
+			if i+1 >= len(args) {
+				return &CLIError{Code: "usage", Message: fmt.Sprintf("missing value for %s", args[i]), ExitCode: 64}
+			}
+			flagArgs = append(flagArgs, args[i], args[i+1])
+			i++
+		case strings.HasPrefix(args[i], "--limit=") || strings.HasPrefix(args[i], "--offset="):
+			flagArgs = append(flagArgs, args[i])
+		default:
+			positional = append(positional, args[i])
+		}
+	}
+
+	fs := flag.NewFlagSet("search", flag.ContinueOnError)
+	limit := fs.Int("limit", 0, "")
+	offset := fs.Int("offset", 0, "")
+	fs.SetOutput(io.Discard)
+
+	if err := fs.Parse(flagArgs); err != nil {
+		return &CLIError{Code: "usage", Message: err.Error(), ExitCode: 64}
+	}
+	if len(positional) != 1 {
 		return &CLIError{Code: "usage", Message: "usage: ait search <keyword>", ExitCode: 64}
 	}
-	needle := "%" + args[0] + "%"
 
-	items, err := a.queryIssues(
-		ctx,
-		fmt.Sprintf(
-			`SELECT %s
-			 FROM issues i
-			 LEFT JOIN issues parent ON parent.id = i.parent_id
-			 WHERE i.title LIKE ? COLLATE NOCASE OR i.description LIKE ? COLLATE NOCASE
-			 ORDER BY i.created_at ASC`,
-			issueSelectColumns("i"),
-		),
-		needle,
-		needle,
+	// Same pagination contract as list: --limit opts into pagination (and the
+	// total_count/has_more response fields), --offset requires --limit, and
+	// omitting both preserves the original unpaginated behavior.
+	limitRequested := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "limit" {
+			limitRequested = true
+		}
+	})
+	if limitRequested && *limit <= 0 {
+		return &CLIError{Code: "usage", Message: "--limit must be a positive integer", ExitCode: 64}
+	}
+	if *offset < 0 {
+		return &CLIError{Code: "usage", Message: "--offset must be a non-negative integer", ExitCode: 64}
+	}
+	if !limitRequested && *offset != 0 {
+		return &CLIError{Code: "usage", Message: "--offset requires --limit", ExitCode: 64}
+	}
+	needle := "%" + positional[0] + "%"
+
+	query := fmt.Sprintf(
+		`SELECT %s
+		 FROM issues i
+		 LEFT JOIN issues parent ON parent.id = i.parent_id
+		 WHERE i.title LIKE ? COLLATE NOCASE OR i.description LIKE ? COLLATE NOCASE
+		 ORDER BY i.created_at ASC`,
+		issueSelectColumns("i"),
 	)
+	params := []any{needle, needle}
+	if limitRequested {
+		query += ` LIMIT ? OFFSET ?`
+		params = append(params, *limit, *offset)
+	}
+
+	items, err := a.queryIssues(ctx, query, params...)
 	if err != nil {
 		return err
 	}
 
-	return PrintJSON(map[string]any{"issues": items})
+	response := map[string]any{"issues": items}
+	if limitRequested {
+		var totalCount int
+		if err := a.db.QueryRowContext(
+			ctx,
+			`SELECT COUNT(*) FROM issues i WHERE i.title LIKE ? COLLATE NOCASE OR i.description LIKE ? COLLATE NOCASE`,
+			needle,
+			needle,
+		).Scan(&totalCount); err != nil {
+			return err
+		}
+		response["total_count"] = totalCount
+		response["has_more"] = *offset+len(items) < totalCount
+	}
+	return PrintJSON(response)
 }
 
 func (a *App) runUpdate(ctx context.Context, args []string) error {

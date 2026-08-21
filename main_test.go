@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -3434,6 +3435,330 @@ func TestDeleteNotFound(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "not found") {
 			t.Fatalf("expected a not-found message, got: %s", err.Error())
+		}
+	})
+}
+
+func createListFixture(t *testing.T, a *ait.App, n int) []ait.Issue {
+	t.Helper()
+
+	created := make([]ait.Issue, 0, n)
+	for i := 1; i <= n; i++ {
+		var iss ait.Issue
+		runJSONCommand(t, a, []string{"create", "--title", fmt.Sprintf("Fixture issue %02d", i)}, &iss)
+		created = append(created, iss)
+	}
+	return created
+}
+
+func TestListPaginationLimitOnly(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		createListFixture(t, a, 7)
+
+		var result struct {
+			Issues     []ait.Issue `json:"issues"`
+			TotalCount int         `json:"total_count"`
+			HasMore    bool        `json:"has_more"`
+		}
+		runJSONCommand(t, a, []string{"list", "--limit", "3"}, &result)
+
+		if len(result.Issues) != 3 {
+			t.Fatalf("expected 3 issues with --limit 3, got %d", len(result.Issues))
+		}
+		if result.TotalCount != 7 {
+			t.Fatalf("expected total_count=7, got %d", result.TotalCount)
+		}
+		if !result.HasMore {
+			t.Fatal("expected has_more=true")
+		}
+		for i, iss := range result.Issues {
+			if iss.Title != fmt.Sprintf("Fixture issue %02d", i+1) {
+				t.Fatalf("expected issue %d in creation order, got %q", i+1, iss.Title)
+			}
+		}
+	})
+}
+
+func TestListPaginationOffsetCombos(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		createListFixture(t, a, 7)
+
+		// Mid-list page.
+		var mid struct {
+			Issues     []ait.Issue `json:"issues"`
+			TotalCount int         `json:"total_count"`
+			HasMore    bool        `json:"has_more"`
+		}
+		runJSONCommand(t, a, []string{"list", "--limit", "3", "--offset", "2"}, &mid)
+		if len(mid.Issues) != 3 {
+			t.Fatalf("expected 3 issues, got %d", len(mid.Issues))
+		}
+		if mid.Issues[0].Title != "Fixture issue 03" {
+			t.Fatalf("expected first item to be issue 03, got %q", mid.Issues[0].Title)
+		}
+		if mid.TotalCount != 7 || !mid.HasMore {
+			t.Fatalf("expected total_count=7 has_more=true, got %d %v", mid.TotalCount, mid.HasMore)
+		}
+
+		// Page landing exactly at the end.
+		var end struct {
+			Issues     []ait.Issue `json:"issues"`
+			TotalCount int         `json:"total_count"`
+			HasMore    bool        `json:"has_more"`
+		}
+		runJSONCommand(t, a, []string{"list", "--limit", "3", "--offset", "5"}, &end)
+		if len(end.Issues) != 2 {
+			t.Fatalf("expected 2 issues on final partial page, got %d", len(end.Issues))
+		}
+		if end.TotalCount != 7 || end.HasMore {
+			t.Fatalf("expected total_count=7 has_more=false, got %d %v", end.TotalCount, end.HasMore)
+		}
+
+		// Offset past the end: empty page.
+		var past struct {
+			Issues     []ait.Issue `json:"issues"`
+			TotalCount int         `json:"total_count"`
+			HasMore    bool        `json:"has_more"`
+		}
+		runJSONCommand(t, a, []string{"list", "--limit", "3", "--offset", "7"}, &past)
+		if len(past.Issues) != 0 {
+			t.Fatalf("expected empty page past the end, got %d issues", len(past.Issues))
+		}
+		if past.TotalCount != 7 || past.HasMore {
+			t.Fatalf("expected total_count=7 has_more=false, got %d %v", past.TotalCount, past.HasMore)
+		}
+	})
+}
+
+func TestListPaginationLongPath(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		createListFixture(t, a, 5)
+
+		output := captureStdout(t, func() {
+			if err := a.Run(ctx, []string{"list", "--long", "--limit", "2", "--offset", "4"}); err != nil {
+				t.Fatalf("run failed: %v", err)
+			}
+		})
+
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(output), &payload); err != nil {
+			t.Fatalf("failed to decode JSON output %q: %v", output, err)
+		}
+		issues, ok := payload["issues"].([]any)
+		if !ok {
+			t.Fatalf("expected issues array in %q", output)
+		}
+		if len(issues) != 1 {
+			t.Fatalf("expected 1 issue on the last page, got %d", len(issues))
+		}
+		if payload["total_count"] != float64(5) {
+			t.Fatalf("expected total_count=5, got %v", payload["total_count"])
+		}
+		if payload["has_more"] != false {
+			t.Fatalf("expected has_more=false, got %v", payload["has_more"])
+		}
+	})
+}
+
+func TestListWithoutPaginationKeepsOriginalShape(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		createListFixture(t, a, 3)
+
+		// Default filter path: exactly issues + hidden_count, no pagination keys.
+		output := captureStdout(t, func() {
+			if err := a.Run(ctx, []string{"list"}); err != nil {
+				t.Fatalf("run failed: %v", err)
+			}
+		})
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(output), &payload); err != nil {
+			t.Fatalf("failed to decode JSON output %q: %v", output, err)
+		}
+		if len(payload) != 2 {
+			t.Fatalf("expected exactly issues+hidden_count keys, got %v", payload)
+		}
+		if _, ok := payload["issues"]; !ok {
+			t.Fatal("expected issues key")
+		}
+		if _, ok := payload["hidden_count"]; !ok {
+			t.Fatal("expected hidden_count key")
+		}
+		if strings.Contains(output, "total_count") || strings.Contains(output, "has_more") {
+			t.Fatalf("pagination keys leaked into unpaginated response: %s", output)
+		}
+
+		// --all path: exactly issues only.
+		output = captureStdout(t, func() {
+			if err := a.Run(ctx, []string{"list", "--all"}); err != nil {
+				t.Fatalf("run failed: %v", err)
+			}
+		})
+		payload = nil
+		if err := json.Unmarshal([]byte(output), &payload); err != nil {
+			t.Fatalf("failed to decode JSON output %q: %v", output, err)
+		}
+		if len(payload) != 1 {
+			t.Fatalf("expected exactly issues key for --all, got %v", payload)
+		}
+		if strings.Contains(output, "total_count") || strings.Contains(output, "has_more") {
+			t.Fatalf("pagination keys leaked into unpaginated --all response: %s", output)
+		}
+	})
+}
+
+func TestListPaginationInvalidFlags(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		cases := [][]string{
+			{"list", "--limit", "0"},
+			{"list", "--limit", "-1"},
+			{"list", "--offset", "-1"},
+			{"list", "--offset", "5"},
+			{"list", "--limit", "3", "--offset", "-2"},
+		}
+		for _, args := range cases {
+			err := runExpectError(t, a, args)
+			if err == nil {
+				t.Fatalf("expected usage error for %v", args)
+			}
+			var cliErr *ait.CLIError
+			if !errors.As(err, &cliErr) {
+				t.Fatalf("expected *ait.CLIError for %v, got %v", args, err)
+			}
+			if cliErr.Code != "usage" {
+				t.Fatalf("expected usage error code for %v, got %q", args, cliErr.Code)
+			}
+		}
+	})
+}
+
+func TestListTreeRejectsPagination(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		createListFixture(t, a, 3)
+
+		// --tree with only --offset trips the "--offset requires --limit"
+		// check first; either usage error is acceptable.
+		err := runExpectError(t, a, []string{"list", "--tree", "--offset", "1"})
+		if err == nil {
+			t.Fatal("expected usage error for tree + offset")
+		}
+		var cliErr *ait.CLIError
+		if !errors.As(err, &cliErr) || cliErr.Code != "usage" {
+			t.Fatalf("expected usage error for [list --tree --offset 1], got %v", err)
+		}
+		for _, args := range [][]string{
+			{"list", "--tree", "--limit", "2"},
+			{"list", "--tree", "--limit", "2", "--offset", "1"},
+		} {
+			err := runExpectError(t, a, args)
+			if err == nil {
+				t.Fatalf("expected usage error for %v", args)
+			}
+			var cliErr *ait.CLIError
+			if !errors.As(err, &cliErr) {
+				t.Fatalf("expected *ait.CLIError for %v, got %v", args, err)
+			}
+			if cliErr.Code != "usage" || !strings.Contains(cliErr.Message, "--tree") {
+				t.Fatalf("expected tree/pagination usage error for %v, got %q", args, cliErr.Message)
+			}
+		}
+	})
+}
+
+func TestListHumanPagination(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		fixtures := createListFixture(t, a, 5)
+
+		output := captureStdout(t, func() {
+			if err := a.Run(ctx, []string{"list", "--human", "--limit", "2", "--offset", "1"}); err != nil {
+				t.Fatalf("run failed: %v", err)
+			}
+		})
+
+		// Only the second and third fixture issues should appear.
+		for i, iss := range fixtures {
+			shown := strings.Contains(output, iss.ID)
+			if i == 1 || i == 2 {
+				if !shown {
+					t.Fatalf("expected issue %s in paginated human output", iss.ID)
+				}
+			} else if shown {
+				t.Fatalf("did not expect issue %s in paginated human output", iss.ID)
+			}
+		}
+	})
+}
+
+func TestSearchPagination(t *testing.T) {
+	testApp(t, func(ctx context.Context, a *ait.App) {
+		runJSONCommand[ait.Issue](t, a, []string{"create", "--title", "Auth flow one"}, nil)
+		runJSONCommand[ait.Issue](t, a, []string{"create", "--title", "Auth flow two"}, nil)
+		runJSONCommand[ait.Issue](t, a, []string{"create", "--title", "Auth flow three"}, nil)
+		runJSONCommand[ait.Issue](t, a, []string{"create", "--title", "Unrelated task"}, nil)
+
+		var page1 struct {
+			Issues     []ait.Issue `json:"issues"`
+			TotalCount int         `json:"total_count"`
+			HasMore    bool        `json:"has_more"`
+		}
+		runJSONCommand(t, a, []string{"search", "auth", "--limit", "2"}, &page1)
+		if len(page1.Issues) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(page1.Issues))
+		}
+		if page1.TotalCount != 3 {
+			t.Fatalf("expected total_count=3 (only matching rows), got %d", page1.TotalCount)
+		}
+		if !page1.HasMore {
+			t.Fatal("expected has_more=true")
+		}
+
+		var page2 struct {
+			Issues     []ait.Issue `json:"issues"`
+			TotalCount int         `json:"total_count"`
+			HasMore    bool        `json:"has_more"`
+		}
+		runJSONCommand(t, a, []string{"search", "auth", "--limit", "2", "--offset", "2"}, &page2)
+		if len(page2.Issues) != 1 {
+			t.Fatalf("expected 1 result on last page, got %d", len(page2.Issues))
+		}
+		if page2.TotalCount != 3 || page2.HasMore {
+			t.Fatalf("expected total_count=3 has_more=false, got %d %v", page2.TotalCount, page2.HasMore)
+		}
+
+		// Unpaginated search keeps the original shape.
+		output := captureStdout(t, func() {
+			if err := a.Run(ctx, []string{"search", "auth"}); err != nil {
+				t.Fatalf("run failed: %v", err)
+			}
+		})
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(output), &payload); err != nil {
+			t.Fatalf("failed to decode JSON output %q: %v", output, err)
+		}
+		if len(payload) != 1 {
+			t.Fatalf("expected exactly issues key, got %v", payload)
+		}
+		if strings.Contains(output, "total_count") || strings.Contains(output, "has_more") {
+			t.Fatalf("pagination keys leaked into unpaginated search response: %s", output)
+		}
+
+		// Invalid pagination flags produce usage errors.
+		for _, args := range [][]string{
+			{"search", "auth", "--limit", "0"},
+			{"search", "auth", "--limit", "-3"},
+			{"search", "auth", "--offset", "-1"},
+			{"search", "auth", "--offset", "2"},
+		} {
+			err := runExpectError(t, a, args)
+			if err == nil {
+				t.Fatalf("expected usage error for %v", args)
+			}
+			var cliErr *ait.CLIError
+			if !errors.As(err, &cliErr) {
+				t.Fatalf("expected *ait.CLIError for %v, got %v", args, err)
+			}
+			if cliErr.Code != "usage" {
+				t.Fatalf("expected usage error code for %v, got %q", args, cliErr.Code)
+			}
 		}
 	})
 }

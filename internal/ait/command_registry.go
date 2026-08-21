@@ -202,14 +202,19 @@ Flags:
   --type <type>        Filter by type (task, epic, initiative)
   --priority <P0-P4>   Filter by priority
   --parent <id>        Filter by parent issue
+  --limit <N>          Return at most N issues (must be > 0). When set, the
+                       JSON response also includes total_count (all rows
+                       matching the filters) and has_more
+  --offset <N>         Skip the first N issues (requires --limit)
 
 Examples:
   ait list
   ait list --status open --type task
   ait list --all --long
   ait list --tree
+  ait list --limit 20 --offset 40
 `,
-			Flags:   []string{"--all", "--long", "--human", "--tree", "--status", "--type", "--priority", "--parent"},
+			Flags:   []string{"--all", "--long", "--human", "--tree", "--status", "--type", "--priority", "--parent", "--limit", "--offset"},
 			NeedsDB: true,
 			Run: func(a *App, ctx context.Context, args []string) error {
 				return a.runList(ctx, args)
@@ -223,9 +228,15 @@ Examples:
 
 Search issues by title or description (case-insensitive).
 
+Flags:
+  --limit <N>    Return at most N results (must be > 0). When set, the JSON
+                 response also includes total_count and has_more
+  --offset <N>   Skip the first N results (requires --limit)
+
 Examples:
   ait search "auth"
   ait search "database migration"
+  ait search "auth" --limit 20 --offset 20
 `,
 			NeedsDB: true,
 			Run: func(a *App, ctx context.Context, args []string) error {
