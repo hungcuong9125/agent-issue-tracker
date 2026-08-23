@@ -283,6 +283,22 @@ func (a *App) runShow(ctx context.Context, args []string) error {
 	})
 }
 
+const (
+	sortOldest = "oldest"
+	sortNewest = "newest"
+)
+
+func issueOrderBy(sortOrder string) (string, error) {
+	switch sortOrder {
+	case sortOldest:
+		return "i.created_at ASC, i.id ASC", nil
+	case sortNewest:
+		return "i.created_at DESC, i.id DESC", nil
+	default:
+		return "", &CLIError{Code: "usage", Message: "--sort must be one of: oldest, newest", ExitCode: 64}
+	}
+}
+
 func (a *App) runList(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	includeAll := fs.Bool("all", false, "")
@@ -293,6 +309,7 @@ func (a *App) runList(ctx context.Context, args []string) error {
 	long := fs.Bool("long", false, "")
 	human := fs.Bool("human", false, "")
 	tree := fs.Bool("tree", false, "")
+	sortOrder := fs.String("sort", sortOldest, "")
 	limit := fs.Int("limit", 0, "")
 	offset := fs.Int("offset", 0, "")
 	fs.SetOutput(io.Discard)
@@ -340,6 +357,10 @@ func (a *App) runList(ctx context.Context, args []string) error {
 	}
 	if *human && *tree {
 		return &CLIError{Code: "usage", Message: "--human and --tree are mutually exclusive", ExitCode: 64}
+	}
+	orderBy, err := issueOrderBy(*sortOrder)
+	if err != nil {
+		return err
 	}
 	if *status != "" {
 		if err := ValidateStatus(*status); err != nil {
@@ -399,8 +420,8 @@ func (a *App) runList(ctx context.Context, args []string) error {
 
 	if *human || *tree {
 		query := fmt.Sprintf(
-			`SELECT %s FROM issues i LEFT JOIN issues parent ON parent.id = i.parent_id%s ORDER BY i.created_at ASC`,
-			issueSelectColumns("i"), where,
+			`SELECT %s FROM issues i LEFT JOIN issues parent ON parent.id = i.parent_id%s ORDER BY %s`,
+			issueSelectColumns("i"), where, orderBy,
 		)
 		query, paginationParams := appendPagination(query)
 		items, err := a.queryIssues(ctx, query, append(params, paginationParams...)...)
@@ -437,8 +458,8 @@ func (a *App) runList(ctx context.Context, args []string) error {
 
 	if *long {
 		query := fmt.Sprintf(
-			`SELECT %s FROM issues i LEFT JOIN issues parent ON parent.id = i.parent_id%s ORDER BY i.created_at ASC`,
-			issueSelectColumns("i"), where,
+			`SELECT %s FROM issues i LEFT JOIN issues parent ON parent.id = i.parent_id%s ORDER BY %s`,
+			issueSelectColumns("i"), where, orderBy,
 		)
 		query, paginationParams := appendPagination(query)
 		items, err := a.queryIssues(ctx, query, append(params, paginationParams...)...)
@@ -457,8 +478,8 @@ func (a *App) runList(ctx context.Context, args []string) error {
 	}
 
 	query := fmt.Sprintf(
-		`SELECT %s FROM issues i%s ORDER BY i.created_at ASC`,
-		issueRefSelectColumns("i"), where,
+		`SELECT %s FROM issues i%s ORDER BY %s`,
+		issueRefSelectColumns("i"), where, orderBy,
 	)
 	query, paginationParams := appendPagination(query)
 	items, err := a.queryIssueRefs(ctx, query, append(params, paginationParams...)...)
@@ -555,20 +576,20 @@ func (a *App) runSearch(ctx context.Context, args []string) error {
 
 	// The query is a positional argument, so Go's flag package would stop
 	// parsing at it ("ait search auth --limit 2"). Pre-scan for the known
-	// pagination flags ourselves so they work on either side of the query,
+	// pagination and sort flags ourselves so they work on either side of the query,
 	// while anything else (including tokens starting with "-") stays a
 	// positional keyword, preserving the old behavior.
 	var flagArgs []string
 	var positional []string
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == "--limit" || args[i] == "--offset":
+		case args[i] == "--limit" || args[i] == "--offset" || args[i] == "--sort":
 			if i+1 >= len(args) {
 				return &CLIError{Code: "usage", Message: fmt.Sprintf("missing value for %s", args[i]), ExitCode: 64}
 			}
 			flagArgs = append(flagArgs, args[i], args[i+1])
 			i++
-		case strings.HasPrefix(args[i], "--limit=") || strings.HasPrefix(args[i], "--offset="):
+		case strings.HasPrefix(args[i], "--limit=") || strings.HasPrefix(args[i], "--offset=") || strings.HasPrefix(args[i], "--sort="):
 			flagArgs = append(flagArgs, args[i])
 		default:
 			positional = append(positional, args[i])
@@ -578,6 +599,7 @@ func (a *App) runSearch(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	limit := fs.Int("limit", 0, "")
 	offset := fs.Int("offset", 0, "")
+	sortOrder := fs.String("sort", sortOldest, "")
 	fs.SetOutput(io.Discard)
 
 	if err := fs.Parse(flagArgs); err != nil {
@@ -605,6 +627,10 @@ func (a *App) runSearch(ctx context.Context, args []string) error {
 	if !limitRequested && *offset != 0 {
 		return &CLIError{Code: "usage", Message: "--offset requires --limit", ExitCode: 64}
 	}
+	orderBy, err := issueOrderBy(*sortOrder)
+	if err != nil {
+		return err
+	}
 	needle := "%" + positional[0] + "%"
 
 	query := fmt.Sprintf(
@@ -612,7 +638,7 @@ func (a *App) runSearch(ctx context.Context, args []string) error {
 		 FROM issues i
 		 LEFT JOIN issues parent ON parent.id = i.parent_id
 		 WHERE i.title LIKE ? COLLATE NOCASE OR i.description LIKE ? COLLATE NOCASE
-		 ORDER BY i.created_at ASC`,
+		 ORDER BY `+orderBy,
 		issueSelectColumns("i"),
 	)
 	params := []any{needle, needle}

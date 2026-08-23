@@ -161,6 +161,7 @@ _ait() {
     local -a statuses=(open in_progress closed cancelled)
     local -a types=(task epic initiative)
     local -a priorities=(P0 P1 P2 P3 P4)
+    local -a sort_orders=(oldest newest)
 
     _ait_issue_ids() {
         local -a ids
@@ -215,7 +216,16 @@ _ait() {
                 '--status[Filter by status]:status:(${statuses})' \
                 '--type[Filter by type]:type:(${types})' \
                 '--priority[Filter by priority]:priority:(${priorities})' \
-                '--parent[Filter by parent]:id:_ait_issue_ids'
+                '--parent[Filter by parent]:id:_ait_issue_ids' \
+                '--sort[Creation-time order]:sort:(${sort_orders})' \
+                '--limit[Maximum results]:count:' \
+                '--offset[Results to skip]:count:'
+            ;;
+        search)
+            _arguments \
+                '--limit[Maximum results]:count:' \
+                '--offset[Results to skip]:count:' \
+                '--sort[Creation-time order]:sort:(${sort_orders})'
             ;;
         create|add)
             _arguments \

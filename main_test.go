@@ -291,6 +291,165 @@ func TestCaseInsensitiveSearch(t *testing.T) {
 	})
 }
 
+func TestListPaginationCoversCreatedAtTiesExactlyOnce(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "ties.db")
+
+	ctx := context.Background()
+	app, err := ait.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+
+	var created []ait.Issue
+	for i := 0; i < 9; i++ {
+		var issue ait.Issue
+		runJSONCommand(t, app, []string{"create", "--title", fmt.Sprintf("Tied issue %d", i)}, &issue)
+		created = append(created, issue)
+	}
+	if err := app.Close(); err != nil {
+		t.Fatalf("close before seeding timestamps: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open seed database: %v", err)
+	}
+	const tiedTimestamp = "2026-08-23T00:00:00Z"
+	if _, err := db.Exec(`UPDATE issues SET created_at = ?, updated_at = ?`, tiedTimestamp, tiedTimestamp); err != nil {
+		db.Close()
+		t.Fatalf("seed tied timestamps: %v", err)
+	}
+	// Give SQLite a valid alternative tie order. ORDER BY created_at alone is
+	// allowed to use this index, while the production query's id tiebreaker is
+	// not satisfied until the final sort key is included.
+	if _, err := db.Exec(`CREATE INDEX tied_created_at_public_id ON issues(created_at, public_id DESC)`); err != nil {
+		db.Close()
+		t.Fatalf("create tie-order index: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seed database: %v", err)
+	}
+
+	app, err = ait.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("reopen failed: %v", err)
+	}
+	defer app.Close()
+
+	seen := make(map[string]int, len(created))
+	var pagedIDs []string
+	for offset := 0; offset < len(created); offset += 3 {
+		var page struct {
+			Issues []ait.IssueRef `json:"issues"`
+		}
+		runJSONCommand(t, app, []string{
+			"list", "--limit", "3", "--offset", fmt.Sprintf("%d", offset),
+		}, &page)
+		for _, issue := range page.Issues {
+			seen[issue.ID]++
+			pagedIDs = append(pagedIDs, issue.ID)
+		}
+	}
+
+	if len(seen) != len(created) {
+		t.Fatalf("paged list returned %d unique issues, want %d: %v", len(seen), len(created), seen)
+	}
+	for _, issue := range created {
+		if seen[issue.ID] != 1 {
+			t.Fatalf("issue %s appeared %d times, want exactly once", issue.ID, seen[issue.ID])
+		}
+	}
+	for i, issue := range created {
+		if pagedIDs[i] != issue.ID {
+			t.Fatalf("paged order at position %d was %s, want %s", i, pagedIDs[i], issue.ID)
+		}
+	}
+}
+
+func TestSortOrdersListAndSearchByCreationTime(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "sort.db")
+	ctx := context.Background()
+	app, err := ait.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+
+	var created []ait.Issue
+	for _, title := range []string{"Sort issue A", "Sort issue B", "Sort issue C"} {
+		var issue ait.Issue
+		runJSONCommand(t, app, []string{"create", "--title", title}, &issue)
+		created = append(created, issue)
+	}
+	if err := app.Close(); err != nil {
+		t.Fatalf("close before seeding sort timestamps: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sort database: %v", err)
+	}
+	timestamps := []string{
+		"2026-08-23T00:00:00Z",
+		"2026-08-23T02:00:00Z",
+		"2026-08-23T01:00:00Z",
+	}
+	for i, issue := range created {
+		if _, err := db.Exec(`UPDATE issues SET created_at = ?, updated_at = ? WHERE public_id = ?`, timestamps[i], timestamps[i], issue.ID); err != nil {
+			db.Close()
+			t.Fatalf("seed timestamp for %s: %v", issue.ID, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sort database: %v", err)
+	}
+
+	app, err = ait.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("reopen failed: %v", err)
+	}
+	defer app.Close()
+
+	assertOrder := func(command []string, want []string) {
+		t.Helper()
+		var result struct {
+			Issues []ait.Issue `json:"issues"`
+		}
+		runJSONCommand(t, app, command, &result)
+		if len(result.Issues) != len(want) {
+			t.Fatalf("%v returned %d issues, want %d", command, len(result.Issues), len(want))
+		}
+		for i, issue := range result.Issues {
+			if issue.ID != want[i] {
+				t.Fatalf("%v position %d was %s, want %s", command, i, issue.ID, want[i])
+			}
+		}
+	}
+
+	oldest := []string{created[0].ID, created[2].ID, created[1].ID}
+	newest := []string{created[1].ID, created[2].ID, created[0].ID}
+	assertOrder([]string{"list", "--long"}, oldest)
+	assertOrder([]string{"list", "--long", "--sort", "oldest"}, oldest)
+	assertOrder([]string{"list", "--long", "--sort", "newest"}, newest)
+	assertOrder([]string{"search", "Sort issue", "--sort", "oldest"}, oldest)
+	assertOrder([]string{"search", "Sort issue", "--sort", "newest"}, newest)
+
+	for _, command := range [][]string{
+		{"list", "--sort", "recent"},
+		{"search", "Sort issue", "--sort", "recent"},
+	} {
+		err := app.Run(ctx, command)
+		var cliErr *ait.CLIError
+		if !errors.As(err, &cliErr) {
+			t.Fatalf("%v returned %v, want CLIError", command, err)
+		}
+		if cliErr.Code != "usage" || cliErr.ExitCode != 64 {
+			t.Fatalf("%v returned code=%s exit=%d, want usage/64", command, cliErr.Code, cliErr.ExitCode)
+		}
+	}
+}
+
 func TestSubcommandHelp(t *testing.T) {
 	testApp(t, func(ctx context.Context, a *ait.App) {
 		// Commands that use FlagSet

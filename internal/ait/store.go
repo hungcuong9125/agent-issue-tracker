@@ -209,7 +209,7 @@ func (a *App) fetchChildren(ctx context.Context, parentID int64) ([]Issue, error
 			 FROM issues i
 			 LEFT JOIN issues parent ON parent.id = i.parent_id
 			 WHERE i.parent_id = ?
-			 ORDER BY i.created_at ASC`,
+			 ORDER BY i.created_at ASC, i.id ASC`,
 			issueSelectColumns("i"),
 		),
 		parentID,
@@ -224,7 +224,7 @@ func (a *App) fetchBlockers(ctx context.Context, id int64) ([]IssueRef, error) {
 		 FROM issue_dependencies d
 		 JOIN issues i ON i.id = d.blocker_id
 		 WHERE d.blocked_id = ?
-		 ORDER BY i.created_at ASC`,
+		 ORDER BY i.created_at ASC, i.id ASC`,
 			issueRefSelectColumns("i"),
 		),
 		id,
@@ -245,7 +245,7 @@ func (a *App) fetchBlocks(ctx context.Context, id int64) ([]IssueRef, error) {
 		 FROM issue_dependencies d
 		 JOIN issues i ON i.id = d.blocked_id
 		 WHERE d.blocker_id = ?
-		 ORDER BY i.created_at ASC`,
+		 ORDER BY i.created_at ASC, i.id ASC`,
 			issueRefSelectColumns("i"),
 		),
 		id,
@@ -265,7 +265,7 @@ func (a *App) fetchNotes(ctx context.Context, issueID int64) ([]Note, error) {
 		 FROM issue_notes n
 		 JOIN issues i ON i.id = n.issue_id
 		 WHERE n.issue_id = ?
-		 ORDER BY n.created_at ASC`,
+		 ORDER BY n.created_at ASC, n.id ASC`,
 		issueID,
 	)
 	if err != nil {
@@ -339,7 +339,7 @@ func (a *App) readyIssues(ctx context.Context, typeFilter string) ([]Issue, erro
 		query += ` AND i.type = ?`
 		params = append(params, typeFilter)
 	}
-	query += ` ORDER BY i.priority ASC, i.created_at ASC`
+	query += ` ORDER BY i.priority ASC, i.created_at ASC, i.id ASC`
 	return a.queryIssues(ctx, query, params...)
 }
 
@@ -369,7 +369,7 @@ func (a *App) readyIssueRefs(ctx context.Context, typeFilter string) ([]IssueRef
 		query += ` AND i.type = ?`
 		params = append(params, typeFilter)
 	}
-	query += ` ORDER BY i.priority ASC, i.created_at ASC`
+	query += ` ORDER BY i.priority ASC, i.created_at ASC, i.id ASC`
 	return a.queryIssueRefs(ctx, query, params...)
 }
 
@@ -623,7 +623,7 @@ func migrateLegacySchema(ctx context.Context, db *sql.DB) error {
 		ctx,
 		`SELECT id, type, title, description, status, parent_id, priority, created_at, updated_at, closed_at
 		 FROM issues
-		 ORDER BY created_at ASC`,
+		 ORDER BY created_at ASC, id ASC`,
 	)
 	if err != nil {
 		return err
@@ -782,7 +782,7 @@ func (a *App) flushTerminalIssues(ctx context.Context, dryRun bool, summary stri
 	// Find closed/cancelled root issues (no parent).
 	roots, err := a.queryIssueRefs(ctx,
 		fmt.Sprintf(
-			`SELECT %s FROM issues i WHERE i.status IN (?, ?) AND i.parent_id IS NULL ORDER BY i.created_at ASC`,
+			`SELECT %s FROM issues i WHERE i.status IN (?, ?) AND i.parent_id IS NULL ORDER BY i.created_at ASC, i.id ASC`,
 			issueRefSelectColumns("i"),
 		),
 		StatusClosed, StatusCancelled,
@@ -930,7 +930,7 @@ func (a *App) closeReason(ctx context.Context, issueID int64) (string, error) {
 	err := a.db.QueryRowContext(ctx,
 		`SELECT body FROM issue_notes
 		 WHERE issue_id = ? AND body LIKE 'Closed: %'
-		 ORDER BY created_at DESC LIMIT 1`,
+		 ORDER BY created_at DESC, id DESC LIMIT 1`,
 		issueID,
 	).Scan(&body)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -1031,7 +1031,7 @@ func (a *App) fetchFlushHistory(ctx context.Context, limit int, since string) ([
 		query += ` WHERE flushed_at >= ?`
 		params = append(params, since)
 	}
-	query += ` ORDER BY flushed_at DESC`
+	query += ` ORDER BY flushed_at DESC, id DESC`
 
 	if limit > 0 {
 		query += ` LIMIT ?`
@@ -1117,7 +1117,7 @@ func (a *App) purgeFlushHistory(ctx context.Context, before string, keep int, fu
 		params = append(params, before)
 	} else {
 		// Keep the last N entries, purge the rest.
-		whereClause = `WHERE id NOT IN (SELECT id FROM flush_history ORDER BY flushed_at DESC LIMIT ?)`
+		whereClause = `WHERE id NOT IN (SELECT id FROM flush_history ORDER BY flushed_at DESC, id DESC LIMIT ?)`
 		params = append(params, keep)
 	}
 

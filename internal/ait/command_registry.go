@@ -202,6 +202,7 @@ Flags:
   --type <type>        Filter by type (task, epic, initiative)
   --priority <P0-P4>   Filter by priority
   --parent <id>        Filter by parent issue
+  --sort <order>       Creation-time order: oldest (default) or newest
   --limit <N>          Return at most N issues (must be > 0). When set, the
                        JSON response also includes total_count (all rows
                        matching the filters) and has_more
@@ -212,9 +213,11 @@ Examples:
   ait list --status open --type task
   ait list --all --long
   ait list --tree
+  ait list --tree --sort newest
   ait list --limit 20 --offset 40
+  ait list --sort newest --limit 20 --offset 0
 `,
-			Flags:   []string{"--all", "--long", "--human", "--tree", "--status", "--type", "--priority", "--parent", "--limit", "--offset"},
+			Flags:   []string{"--all", "--long", "--human", "--tree", "--status", "--type", "--priority", "--parent", "--sort", "--limit", "--offset"},
 			NeedsDB: true,
 			Run: func(a *App, ctx context.Context, args []string) error {
 				return a.runList(ctx, args)
@@ -232,12 +235,15 @@ Flags:
   --limit <N>    Return at most N results (must be > 0). When set, the JSON
                  response also includes total_count and has_more
   --offset <N>   Skip the first N results (requires --limit)
+  --sort <order> Creation-time order: oldest (default) or newest
 
 Examples:
   ait search "auth"
   ait search "database migration"
   ait search "auth" --limit 20 --offset 20
+  ait search "auth" --sort newest --limit 20 --offset 0
 `,
+			Flags:   []string{"--limit", "--offset", "--sort"},
 			NeedsDB: true,
 			Run: func(a *App, ctx context.Context, args []string) error {
 				return a.runSearch(ctx, args)
