@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-08-27
+
+### Added
+- `--limit` and `--offset` flags on `list` and `search` commands for pagination support, returning `total_count` and `has_more` metadata in JSON responses.
+- `--sort <field>` flag on `list` command to sort issues by `id`, `priority`, `created`, or `updated`.
+- Project documentation in `docs/` including `WORKSPACE_PROTOCOL.md`, `issue-policy.md`, `FEATURE_INTAKE.md`, and design/review briefs.
+- Multi-repo orchestration and recap skills under `docs/ait-skills/` (`ait-fleet`, `ait-recap`, `PEER_REVIEW.md`).
+
+### Fixed
+- Deterministic ordering for paginated `list` results when sorted.
+
 ## [1.14.0] - 2026-07-12
 
 ### Changed
@@ -192,7 +203,8 @@ First stable release. Core feature set:
 - Forward-only schema migration system
 - Custom database path via `--db`
 
-[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.14.0...HEAD
+[Unreleased]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/ohnotnow/agent-issue-tracker/compare/v1.11.0...v1.12.0
