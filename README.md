@@ -60,9 +60,9 @@ It's not designed to handle cross-team shared issues, work, projects.  The inter
 - `config`
 - `create`
 - `show`
-- `list` (`--type`, `--status`, `--priority`, `--parent`, `--all`, `--long`, `--human`, `--tree`)
+- `list` (`--type`, `--status`, `--priority`, `--parent`, `--all`, `--long`, `--human`, `--tree`, `--limit`, `--offset`, `--sort`)
 - `status`
-- `search`
+- `search` (`--limit`, `--offset`)
 - `update` (`--title`, `--description`, `--status`, `--priority`)
 - `close` (`--cascade`, `--note`, `--reason` — alias for `--note`)
 - `reopen`
@@ -124,7 +124,43 @@ ait list --status <Tab> # status values
 The `search` command matches against issue titles and descriptions, case-insensitively:
 
 ```bash
-ait search "auth"      # matches "Auth Flow", "AUTH_TOKEN", etc.
+ait search "auth"                        # matches "Auth Flow", "AUTH_TOKEN", etc.
+ait search "auth" --limit 10             # first 10 matches
+ait search "auth" --limit 10 --offset 10 # second page of 10 matches
+```
+
+Responses with pagination include `total_count` and `has_more` metadata in the JSON output.
+
+## Pagination and Sorting
+
+Both `list` and `search` support offset-based pagination to navigate large result sets:
+
+- `--limit <n>` — maximum number of issues to return
+- `--offset <n>` — number of issues to skip (zero-indexed)
+
+When pagination is active, the JSON response includes:
+- `total_count` — total matching issues before applying `--limit`/`--offset`
+- `has_more` — boolean (`true`/`false`) indicating if more matching issues exist
+
+```bash
+ait list --limit 10                      # first page of 10 issues
+ait list --limit 10 --offset 10          # second page
+ait list --status open --limit 20        # paginated filtered list
+```
+
+### Sorting
+
+The `list` command supports ordering results via `--sort <field>`:
+
+- `id` — by issue ID (default deterministic order)
+- `priority` — by priority (`P0` -> `P1` -> `P2` -> ...)
+- `created` — by creation timestamp
+- `updated` — by last updated timestamp
+
+```bash
+ait list --sort priority                 # order by priority
+ait list --sort created --limit 10       # 10 oldest issues
+ait list --human --sort updated          # tabular human view sorted by last update
 ```
 
 ## Output Modes
@@ -340,18 +376,28 @@ That database stores:
 
 This keeps issue state close to the codebase it belongs to and makes it easy to inspect or back up.
 
-## Claude Code Skills and Agents
+## Agent Skills and Documentation Protocols
 
-The `claude/` directory contains pre-written skills and agents that teach an agent how to use `ait` effectively:
+The repository includes pre-written skills, agents, and workspace protocols under `docs/` and `claude/`:
 
-- **`claude/skills/ait/SKILL.md`** — core command reference, workflow patterns, and best practices
-- **`claude/skills/ait/DELEGATION.md`** — guide for delegating work to sub-agents via Markdown export
+### Workspace Protocols (`docs/`)
+
+- **[`docs/WORKSPACE_PROTOCOL.md`](docs/WORKSPACE_PROTOCOL.md)** — operational protocol for agents working in multi-workspace environments
+- **[`docs/issue-policy.md`](docs/issue-policy.md)** — guidelines on issue lifecycles, statuses, and updates
+- **[`docs/FEATURE_INTAKE.md`](docs/FEATURE_INTAKE.md)** — intake process for planning and structuring new features into initiatives, epics, and tasks
+
+### Skills and Agents
+
+- **[`docs/ait-skills/ait/SKILL.md`](docs/ait-skills/ait/SKILL.md)** / **`claude/skills/ait/SKILL.md`** — core command reference, workflow patterns, and best practices
+- **[`docs/ait-skills/ait/DELEGATION.md`](docs/ait-skills/ait/DELEGATION.md)** / **`claude/skills/ait/DELEGATION.md`** — guide for delegating work to sub-agents via Markdown export
+- **[`docs/ait-skills/ait-fleet/SKILL.md`](docs/ait-skills/ait-fleet/SKILL.md)** — multi-repo orchestration for projects spanning multiple git repositories
+- **[`docs/ait-skills/ait-recap/SKILL.md`](docs/ait-skills/ait-recap/SKILL.md)** — structured session recap and handoff skill
 - **`claude/agents/plan-to-ait.md`** — agent that converts plan-mode plans into structured ait epics and issues
-- **`claude/commands/hello-ait.md`** — example session-start command that reads the README and checks for outstanding work. This is a boilerplate starting point — edit it to suit your own conversational style.
+- **`claude/commands/hello-ait.md`** — example session-start command that reads the README and checks for outstanding work.
 
-To install, copy the skill and agent directories into your agents configuration directory (eg, `~/.claude/skills/`, `~/.claude/agents/`
+To install, copy the skill and agent directories into your agents configuration directory (eg, `~/.claude/skills/`, `~/.claude/agents/`, or corresponding agent customization paths).
 
-You might also want to allow the agent to run `ait` and use the `ait` skill without needing permission.  For claude code for example, in `~/.claude/settings.json` :
+You might also want to allow the agent to run `ait` and use the `ait` skill without needing permission. For Claude Code for example, in `~/.claude/settings.json`:
 
 ```json
 {
